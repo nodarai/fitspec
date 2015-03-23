@@ -1,0 +1,1 @@
+fitspec.d: ../fitspec.cpp
