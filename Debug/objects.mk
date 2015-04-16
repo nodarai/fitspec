@@ -4,5 +4,5 @@
 
 USER_OBJS :=
 
-LIBS := -lCCfits -lgomp
+LIBS := -lCCfits -lmpfit -lgomp
 

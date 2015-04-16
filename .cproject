@@ -38,12 +38,14 @@
 							<tool id="cdt.managedbuild.tool.gnu.cpp.linker.exe.debug.1797548427" name="GCC C++ Linker" superClass="cdt.managedbuild.tool.gnu.cpp.linker.exe.debug">
 								<option id="gnu.cpp.link.option.libs.1515281850" name="Libraries (-l)" superClass="gnu.cpp.link.option.libs" valueType="libs">
 									<listOptionValue builtIn="false" value="CCfits"/>
+									<listOptionValue builtIn="false" value="mpfit"/>
 									<listOptionValue builtIn="false" value="gomp"/>
 								</option>
 								<option id="gnu.cpp.link.option.paths.1677510129" name="Library search path (-L)" superClass="gnu.cpp.link.option.paths" valueType="libPaths">
 									<listOptionValue builtIn="false" value="/usr/local/lib"/>
+									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/${ProjName}}&quot;"/>
 								</option>
-								<option id="gnu.cpp.link.option.other.1518612245" name="Other options (-Xlinker [option])" superClass="gnu.cpp.link.option.other" valueType="stringList"/>
+								<option id="gnu.cpp.link.option.other.1518612245" name="Other options (-Xlinker [option])" superClass="gnu.cpp.link.option.other"/>
 								<option id="gnu.cpp.link.option.shared.66792523" name="Shared (-shared)" superClass="gnu.cpp.link.option.shared" value="false" valueType="boolean"/>
 								<option id="gnu.cpp.link.option.flags.1859225256" name="Linker flags" superClass="gnu.cpp.link.option.flags" value="" valueType="string"/>
 								<inputType id="cdt.managedbuild.tool.gnu.cpp.linker.input.117951757" superClass="cdt.managedbuild.tool.gnu.cpp.linker.input">

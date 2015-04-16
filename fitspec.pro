@@ -2,19 +2,19 @@
 
 pro fitspec
 
-fits_read,'coadd.fits',finalcube
-restore,'wl.dat'
-fits_read, 'sky.fits', sky
+fits_read,'coadd-HaNII.fits',finalcube
+restore,'wl_HaNII.dat'
+fits_read, 'sky_HaNII.fits', sky
 
 
-sig2d = finalcube[*,*,2200:2440]
-finalcube = finalcube[*,*,2605:2845]
-wl = wl[2605:2845]
+sig2d = finalcube[*,*,373:613]
+finalcube = finalcube[*,*,100:340]
+wl = wl[100:340]
 sz = size(finalcube)
-sky = sky[2605:2845]
+sky = sky[100:340]
 var = 1/sky
 
-fitcube = fltarr(sz[1],sz[2],sz[3])     ; holds best fit 
+fitcube = fltarr(sz[1],sz[2],sz[3])     ; holds best fit
 acube = fltarr(sz[1],sz[2],5)           ; holds best parameters
 bcube = fltarr(sz[1],sz[2],3)           ; holds best broad line parameters
 aerrorcube = fltarr(sz[1],sz[2],8)      ; holds +- 1 sigma values for vel.
@@ -26,7 +26,7 @@ brlf =  [0.034354,0.5,2.0,0,0.3, 1,10,0.034354] ; alast plus [bl inten, bl width
 ; looping in this order makes the fit wander less between columns.
 
 ;window, 0, xsize=700,ysize=700, retain=2
-setcolours
+;setcolours
 !p.multi=[0,3,3]
 ;  just loop over a smll region for now.
 akeep = alast
@@ -35,10 +35,10 @@ for j=3,sz[2]-3 do for i = 3,sz[1]-3 do begin
    a = alast
    b = brlf
    if j eq 1 then a=akeep
-   if j eq 1 then b=bkeep  
+   if j eq 1 then b=bkeep
 
 i=35
-j=45  
+j=45
 
 ;  j=20
 ;  i=20
@@ -52,10 +52,11 @@ j=45
   for k = 0,sz[3]-1 do y(k) = total(finalcube[i,j,k])
   for k = 0,sz[3]-1 do sig(k) = total(sig2d[i,j,k])
 
-  sig2 = stdev(sig)
+  sig2 = stddev(sig)
   sig2 = sig2*sig2
- 
+
   w = fltarr(sz[3])+1.
+  ;formpfit:  w = sky/median(sky)
   w = var/median(var) ; bodge to get chi^2=1 in noise
 
   av = (moment(y))[0]
@@ -77,7 +78,7 @@ j=45
 ;  plot,x,y
 ;  oplot,x,fit,color=2
 
-  chi2lim = 25.
+  chi2lim = 49.
 
   if (chi0-chi1 gt chi2lim) then begin
      ;plot, wl, y
@@ -103,8 +104,8 @@ j=45
        acube[i,j,*] = b[0:4]
        bcube[i,j,*] = b[5:7]
        print, 'best parameters = ', b
-       print, '  with ', chi1-chi2, ' at ', i, j    
-     
+       print, '  with ', chi1-chi2, ' at ', i, j
+
       ;err1=errsinglet(wl,y,b,w,chi2,sig2,[0.00001,0,0,0,0,0,0,0],0,brtriplet=1)
       ;err2=errsinglet(wl,y,b,w,chi2,sig2,[0,0.001,0,0,0,0,0,0],1,brtriplet=1)
      ;err3=errsinglet(wl,y,b,w,chi2,sig2,[0,0,0.00001,0,0,0,0,0],2,brtriplet=1)
@@ -122,7 +123,7 @@ j=45
      ;aerrorcube[i,j,5] = err6
      ;aerrorcube[i,j,6] = err7
      ;aerrorcube[i,j,7] = err8
-   
+
      endif else begin
 
          plot, wl, y
@@ -132,7 +133,7 @@ j=45
          acube[i,j,*] = a
          print, 'best parameters = ', a
          print, '  with ', chi0-chi1, ' at ', i, j
-     
+
       ;err1=errsinglet(wl,y,a,w,chi1,sig2,[0.00001,0,0,0,0],0,triplet=1)
       ;err2=errsinglet(wl,y,a,w,chi1,sig2,[0,0.001,0,0,0],1,triplet=1)
      ;err3=errsinglet(wl,y,a,w,chi1,sig2,[0,0,0.00001,0,0],2,triplet=1)
@@ -160,7 +161,7 @@ j=45
   endif  else  begin
     for k = 0,sz[3]-1 do y(k) = total(finalcube[i-1:i+1,j-1:j+1,k]) / 9.0
     for k = 0,sz[3]-1 do sig(k) = total(sig2d[i-1:i+1,j-1:j+1,k]) / 9.0
-    sig2 = stdev(sig)
+    sig2 = stdev(sig)  ; standard deviation
     sig2 = sig2*sig2
     av = (moment(y))[0]
     chi0 = total((w*(y - av)^2)/sig2)
@@ -169,6 +170,7 @@ j=45
     print, 'Reduced chi^2 when no emission line = ', chi0r
 
     fit = curvefit(x,y,w,a,sigma,chisq=chi1,function_name="triplet",/noderivative)
+    print, fit
     chi1 = total((w*(y - fit)^2)/sig2)
     chi1r = chi1/(n_elements(y)-(n_elements(a)-1))
     print, 'Total chi^2 when fit inclubed = ', chi1
@@ -176,7 +178,7 @@ j=45
 
     oplot,x,fit,color=3
     ;if (chi0-chi1 gt chi2lim) then begin
-        
+
   if (chi0-chi1 gt chi2lim) then begin
 
      fitb = curvefit(x,y,w,b,sigma,chisq=chi1,function_name="tripletbr",/noderivative)
@@ -193,8 +195,8 @@ j=45
        acube[i,j,*] = b[0:4]
        bcube[i,j,*] = b[5:7]
        print, 'best parameters = ', b
-       print, '  with ', chi0-chi2, ' at ', i, j    
-     
+       print, '  with ', chi0-chi2, ' at ', i, j
+
       ;err1=errsinglet(wl,y,b,w,chi2,sig2,[0.00001,0,0,0,0,0,0,0],0,brtriplet=1)
       ;err2=errsinglet(wl,y,b,w,chi2,sig2,[0,0.001,0,0,0,0,0,0],1,brtriplet=1)
      ;err3=errsinglet(wl,y,b,w,chi2,sig2,[0,0,0.00001,0,0,0,0,0],2,brtriplet=1)
@@ -212,15 +214,15 @@ j=45
      ;aerrorcube[i,j,5] = err6
      ;aerrorcube[i,j,6] = err7
      ;aerrorcube[i,j,7] = err8
-  
+
      endif else begin
      plot, wl, y
      oplot, wl, fit, color=2
      fitcube[i,j,*] = fit
      acube[i,j,*] = a
      print, 'best parameters = ', a
-     print, '  with ', chi0-chi1, ' at ', i, j        
-     
+     print, '  with ', chi0-chi1, ' at ', i, j
+
       ;err1=errsinglet(wl,y,a,w,chi1,sig2,[0.00001,0,0,0,0],0,triplet=1)
       ;err2=errsinglet(wl,y,a,w,chi1,sig2,[0,0.001,0,0,0],1,triplet=1)
      ;err3=errsinglet(wl,y,a,w,chi1,sig2,[0,0,0.00001,0,0],2,triplet=1)
@@ -236,7 +238,7 @@ j=45
      ;aerrorcube[i,j,5] = 0
      ;aerrorcube[i,j,6] = 0
      ;aerrorcube[i,j,7] = 0
-                        
+
      endelse
 
 ;wait,5
@@ -246,7 +248,7 @@ j=45
         print, ' no line detected at ', i, j
     endelse
 endelse
-  
+
 endfor
 
 save,finalcube,wl,acube,bcube;, aerrorcube
