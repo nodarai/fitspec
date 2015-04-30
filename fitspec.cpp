@@ -26,8 +26,30 @@
 using namespace std;
 using namespace CCfits;
 
-// Global variables
+
+
+// Global variables********************
 double piSqr = sqrt( 2.0 * M_PI );
+size_t sliceSize,
+	   aSize,
+	   bSize;
+
+valarray<double> finalCube,
+				 sky,
+				 wl,
+				 var,
+				 sig2d,
+				 alast,
+				 brlf,
+				 aResult,
+				 bResult;
+
+vector<unsigned int> finalCubeDimentions,
+					 skyDimentions,
+					 wlDimentions;
+
+//*************************************
+
 
 
 struct parameters {
@@ -35,202 +57,24 @@ struct parameters {
 	valarray<double> f;
 	valarray<double> y;
 	valarray<double> yErr;
-//	valarray<double> pder;
 };
 
 
-void readImage(valarray<double> &contents, vector<unsigned int> &dimentions, string fileName) {
-
-	  FITS::setVerboseMode(true);
-
-	  try {
-
-		   auto_ptr<FITS> pInfile( new FITS( fileName, Read, true ) );
-
-		   PHDU& image = pInfile->pHDU();
-
-		  // valarray<double>  contents;
 
 
-		   // read all user-specifed, coordinate, and checksum keys in the image
-		   image.readAllKeys();
-
-		   image.read( contents );
-
-		   int size =  image.axes();
-		   dimentions.resize( size );
-		  // dimentions[0] = size;
-		   for(int i = 0; i < size; ++i )
-			   dimentions[i] = image.axis( i );
-
-		   cout << "size of the array is: " << contents.size() << '\n';
-
-		   // this doesn't print the data, just header info.
-	 //      std::cout << image << std::endl;
-	/*       if ( size > 2 ) {
-			   cout << fileName << ":\n";
-			   for(size_t i = 0; i < dimentions[0] * 4; ++i)
-				   cout << contents[i] << ' ';
-			   cout << endl;
-		   }
-	*/
-	/*
-		   long ax1(image.axis(0));
-		   long ax2(image.axis(1));
-
-
-		   for (long j = 0; j < ax2; j+=10)
-		   {
-				   std::ostream_iterator<double> c(std::cout,"\t");
-				   std::copy(&contents[j*ax1],&contents[(j+1)*ax1-1],c);
-				   std::cout << '\n';
-		   }
-	*/
-	 //      std::cout << std::endl;
-	  //     return ;
-
-
-	    } catch (FitsException&) {
-
-	      cerr << " Fits Exception Thrown by FitsImage class \n";
-	      cerr << " Fits file name : " << fileName << endl;
-	     // rv=1; // problem
-	    }
-
-}
+void runThreads(void*);
+int  triplet(int, int, double*, double*, double**, void*);
+int  tripletbr(int, int, double*, double*, double**, void*);
+void readImage(valarray<double>&, vector<unsigned int>&, string);
+int  writeImage(string, long, vector<long>, valarray<double>);
 
 
 
-int writeImage()
-{
-
-    // Create a FITS primary array containing a 2-D image
-    // declare axis arrays.
-    long naxis    =   2;
-    long naxes[2] = { 300, 200 };
-
-    // declare auto-pointer to FITS at function scope. Ensures no resources
-    // leaked if something fails in dynamic allocation.
-    std::auto_ptr<FITS> pFits(0);
-
-    try
-    {
-        // overwrite existing file if the file already exists.
-
-        const std::string fileName("!atestfil.fit");
-
-        // Create a new FITS object, specifying the data type and axes for the primary
-        // image. Simultaneously create the corresponding file.
-
-        // this image is unsigned short data, demonstrating the cfitsio extension
-        // to the FITS standard.
-
-        pFits.reset( new FITS(fileName , USHORT_IMG , naxis , naxes ) );
-    }
-    catch (FITS::CantCreate)
-    {
-          // ... or not, as the case may be.
-          return -1;
-    }
-
-    // references for clarity.
-
-    long& vectorLength = naxes[0];
-    long& numberOfRows = naxes[1];
-    long nelements(1);
-
-
-    // Find the total size of the array.
-    // this is a little fancier than necessary ( It's only
-    // calculating naxes[0]*naxes[1]) but it demonstrates  use of the
-    // C++ standard library accumulate algorithm.
-
-    nelements = std::accumulate(&naxes[0],&naxes[naxis],1,std::multiplies<long>());
-
-    // create a new image extension with a 300x300 array containing float data.
-
-    std::vector<long> extAx(2,300);
-    string newName ("NEW-EXTENSION");
-    ExtHDU* imageExt = pFits->addImage(newName,FLOAT_IMG,extAx);
-
-    // create a dummy row with a ramp. Create an array and copy the row to
-    // row-sized slices. [also demonstrates the use of valarray slices].
-    // also demonstrate implicit type conversion when writing to the image:
-    // input array will be of type float.
-
-    std::valarray<int> row(vectorLength);
-    for (long j = 0; j < vectorLength; ++j) row[j] = j;
-    std::valarray<int> array(nelements);
-    for (int i = 0; i < numberOfRows; ++i)
-    {
-        array[std::slice(vectorLength*static_cast<int>(i),vectorLength,1)] = row + i;
-    }
-
-    // create some data for the image extension.
-    long extElements = std::accumulate(extAx.begin(),extAx.end(),1,std::multiplies<long>());
-    std::valarray<float> ranData(extElements);
-    const float PIBY (M_PI/150.);
-    for ( int jj = 0 ; jj < extElements ; ++jj)
-    {
-            float arg = PIBY*jj;
-            ranData[jj] = std::cos(arg);
-    }
-
-    long  fpixel(1);
-
-    // write the image extension data: also demonstrates switching between
-    // HDUs.
-    imageExt->write(fpixel,extElements,ranData);
-
-    //add two keys to the primary header, one long, one complex.
-
-    long exposure(1500);
-    std::complex<float> omega(std::cos(2*M_PI/3.),std::sin(2*M_PI/3));
-    pFits->pHDU().addKey("EXPOSURE", exposure,"Total Exposure Time");
-    pFits->pHDU().addKey("OMEGA",omega," Complex cube root of 1 ");
-
-
-    // The function PHDU& FITS::pHDU() returns a reference to the object representing
-    // the primary HDU; PHDU::write( <args> ) is then used to write the data.
-
-    pFits->pHDU().write(fpixel,nelements,array);
-
-
-    // PHDU's friend ostream operator. Doesn't print the entire array, just the
-    // required & user keywords, and is provided largely for testing purposes [see
-    // readImage() for an example of how to output the image array to a stream].
-
-    std::cout << pFits->pHDU() << std::endl;
-
-    return 0;
-}
 
 
 
-/*
-void readData(valarray<double> &content, vector<unsigned int> &dimentions, string filename) {
-	ifstream myFile;
-	myFile.open( filename.c_str() );
 
-	if( myFile.is_open() ) {
-		unsigned int size;
-		myFile >> size;
-		dimentions.push_back( size );
-		cout << "Size of the wl is: " << dimentions[0] << endl;
-		content.resize( dimentions[0] );
-		double d;
-		for(size_t i = 0; i < dimentions[0]; ++i) {
-			myFile >> d;
-			content[i] = d;
-			cout << content[i] << ' ';
-		}
-		cout << endl;
-	} else
-		cout << "Can't open file: " << filename << endl;
 
-	myFile.close();
-}
-*/
 void readInputFile(string fileName, valarray<double> &alast, valarray<double> &brlf, size_t *start, size_t *sigStart, size_t *sliceSize) {
 	ifstream myFile;
 	myFile.open( fileName.c_str() );
@@ -274,114 +118,73 @@ double stdev(valarray<double> va)
     return sqrt( inverse * E );
 }
 
+
+
+
+int partition(valarray<double> &A, int lo, int hi) {
+  int pivotIndex = ( hi + lo ) / 2;
+  double pivotValue = A[pivotIndex];
+  int storeIndex = lo;
+
+  swap( A[pivotIndex], A[hi] );
+
+  for(int i = lo; i < hi; ++i) {
+    if ( A[i] < pivotValue ) {
+      swap( A[i], A[storeIndex] );
+      ++storeIndex;
+    }
+  }
+
+  swap( A[storeIndex], A[hi] );
+
+  return storeIndex;
+}
+
+void quickSort(valarray<double> &A, int lo, int hi) {
+  if ( lo < hi ) {
+    int p = partition( A, lo, hi );
+    if ( ( p == (A.size() / 2) ) && ( (A.size() % 2) == 1 ) ) {
+      cout << "returning" << endl;
+      return;
+    }
+//#pragma omp sections
+//    {
+//#pragma omp section
+  //  	{
+    		quickSort( A, lo, p - 1 );
+//    	}
+//#pragma omp section
+ //   	{
+    		quickSort( A, p + 1, hi );
+ //   	}
+    }
+//  }
+}
+
+void quickSort(valarray<double> &A) {
+  quickSort( A, 0, A.size() - 1 );
+}
+
+
+
+
+
 double median(valarray<double> va) {
+
 	size_t size = va.size();
-	multiset<double> ms;
-	for(size_t i = 0; i < size; ++i)
-		ms.insert( va[i] );
-	set<double>::iterator it = ms.begin();
-	advance( it, size / 2 );
-//	cout << "medians: " << *it << ' ' << *(--it) << endl;
-	if ( size % 2 )
-		return *it;
-	return  ( *it + *(--it) ) / 2;
+
+	quickSort( va );
+
+	return size % 2 ? va[size / 2] : ( va[size / 2] + va[size / 2 + 1] ) / 2;
+
 }
 
 
 //int triplet(double x, double *par, double *f, double *pder) {
-int triplet(int m, int n, double *p, double *deviates, double **derivs, void *data) {
-	//double *par = ;
-	struct parameters *pr = (struct parameters *) data;
-	valarray<double> x( pr->x ),
-					 y( pr->y ),
-					 yErr( pr->yErr );
-/*
-	for(size_t i = 0; i < yErr.size(); ++i)
-		cout << "yErr[" << i << "]= " << yErr[i] << endl;
-*/
-	double z = p[0],
-		  inten = p[1],
-		  ww = p[2],
-		  contin = p[3],
-		  NIIinten = p[4],
-		  ha = 6562.8 * ( 1 + z ),
-		  NII_r = 6583 * ( 1 + z ),
-		  dNII_b = 6548.1 * ( 1 + z );
 
-	//cout << p[0] << " " << p[1] << " " << p[2] << " " << p[3] << " " << p[4] << endl;
-
-
-	ww = sqrt( 0.6 * 0.6 + ww * ww );//         ; default width to match sky line.
-
-	//cout << "ww= " << ww << endl;
-
-
-
-	valarray<double> Ha = inten / ( ww * piSqr ) * exp( -0.5 * ( x - ha ) * ( x - ha ) / ( ww * ww ) );
-	valarray<double> NII_a =  NIIinten / ( ww * piSqr ) * exp( -0.5 * ( x - NII_r ) * ( x - NII_r ) / ( ww * ww ) );
-	valarray<double> NII_b = NIIinten / ( 3. * ww * piSqr ) * exp( -0.5 * ( x - dNII_b ) * ( x - dNII_b ) / ( ww * ww ) );
-
-	pr->f = NII_b + Ha + NII_a  + contin;
-	pr->f *= 10000;
-
-
-	for( size_t i = 0; i < y.size(); ++i ) {
-		deviates[i] = ( y[i] - pr->f[i] ) / yErr[i];
-	}
-
-	//pr->pder.resize( x.size() * par.size() );
-/*
-	for(size_t i = 0; i < pr->f.size(); ++i)
-		cout << "pr->f[" << i << "]= " << pr->f[i] << endl;
-	for(size_t i = 0; i < pr->pder.size(); ++i)
-		cout << "pr->par[" << i << "]= " << pr->pder[i] << endl;
-*/
-	return 0;
-	//pder = fltarr(n_elements(x),n_elements(par));//   ; no value returned.
-}
 
 
 //void tripletbr(double x, double *par, double *f, double *pder) {
-int tripletbr(int m, int n, double *p, double *deviates, double **derivs, void *data) {
-	//double *par = ;
-	struct parameters *pr = (struct parameters *) data;
-	valarray<double> x( pr->x ),
-					 y( pr->y ),
-					 yErr( pr->yErr );
-
-	double z = p[0],
-		  inten = p[1],
-		  ww = p[2],
-		  contin = p[3],
-		  NIIinten = p[4],
-		  brint = p[5],
-		  brww = p[6],
-		  zbr = p[7],
-		  ha = 6562.8 * ( 1 + z ),
-		  dNII_r = 6583 * ( 1 + z ),
-		  dNII_b = 6548.1 * ( 1 + z ),
-		  dbr = 6562.8 * ( 1 + zbr );
-
-	ww = sqrt( 0.6 * 0.6 + ww * ww ); //        ; default width to match sky line.
-	brww = sqrt( 0.6 * 0.6 + brww * brww );
-
-
-	//;if ww ge 10 then ww = 10
-
-	valarray<double> Ha = inten / ( ww * piSqr ) *  exp( -0.5 * ( x - ha ) * ( x - ha ) / ( ww * ww ) );
-	valarray<double> NII_r = NIIinten / ( ww * piSqr ) * exp( -0.5 * ( x - dNII_r ) * ( x - dNII_r ) / ( ww * ww ) );
-	valarray<double> NII_b = NIIinten / ( 3. * ww * piSqr ) * exp( -0.5 * ( x - dNII_b ) * ( x - dNII_b ) / ( ww * ww ) );
-	valarray<double> br = brint / ( brww * piSqr ) * exp( -0.5 * ( x - dbr ) * ( x - dbr ) / ( brww * brww ) );
-
-	pr->f = contin + Ha + NII_r + NII_b + br;
-	pr->f *= 10000;
-
-	for( size_t i = 0; i < y.size(); ++i ) {
-		deviates[i] = ( y[i] - pr->f[i] ) / yErr[i];
-	}
-	//pder = fltarr( n_elements( x ), n_elements( par ) );
-	return 0;
-}
 
 
 double avOfNeighbors(valarray<double> va, vector<unsigned int> dimentions,  size_t i, size_t j, size_t k) {
@@ -428,19 +231,21 @@ int main(int argc, char* argv[]) {
 		   } else
 			   cout << "Only one parameter should be passed. \nThe rest will be ignored" << '\n';
 
-
+/*
 	valarray<double> finalCube,
 					 sky,
 					 wl,
 					 var;
+
 	vector<unsigned int> finalCubeDimentions,
 						 skyDimentions,
 						 wlDimentions;
 	valarray<double> alast,
 				   brlf;
+*/
 	size_t startIndex,
-		   sigStartIndex,
-		   sliceSize;
+		   sigStartIndex;
+//		   sliceSize;
 
 	readInputFile( "inputfile.txt", alast, brlf, &startIndex, &sigStartIndex, &sliceSize );
 	readImage( finalCube, finalCubeDimentions, "coadd-HaNII.fits" );
@@ -489,8 +294,10 @@ int main(int argc, char* argv[]) {
 					 acube( finalCubeDimentions[0] * finalCubeDimentions[2] * 5, 0.0 ),
 					 bcube( finalCubeDimentions[0] * finalCubeDimentions[2] * 3, 0.0 ),
 					 aerrorcube( finalCubeDimentions[0] * finalCubeDimentions[2] * 8, 0.0 ),
-					 sig2d( finalCubeDimentions[0] * finalCubeDimentions[1] * sliceSize ),
 					 akeep( alast[0], alast.size() ), bkeep( brlf[0], brlf.size() );
+
+
+	 sig2d.resize( finalCubeDimentions[0] * finalCubeDimentions[1] * sliceSize );
 /*
 	for(size_t outterIndex = 3; outterIndex < finalCubeDimentions[1] - 3; ++outterIndex)
 		for(size_t innerIndex = 3; innerIndex < finalCubeDimentions[0] - 3; ++innerIndex) {
@@ -501,7 +308,6 @@ int main(int argc, char* argv[]) {
 /*
 	for(size_t i = 0; i < sky.size(); ++i)
 		cout << "var[" << i << "]= " << var[i] << endl;
-/*
 	for(size_t i = 0; i < alast.size(); ++i)
 		cout << "alast[" << i << "]= " << alast[i] << endl;
 	for(size_t i = 0; i < brlf.size(); ++i)
@@ -574,22 +380,52 @@ int main(int argc, char* argv[]) {
 	//valarray<double> akeep ( alast ), bkeep( brlf );
 
 //	double a[5] = { 0.0543693, 10.1, 2.0, 0.0, 10.1 };
-//	omp_set_num_threads( 2 );
-//#pragma omp parallel for schedule(static) collapse(2)
-	size_t aSize = alast.size(),
-		   bSize = brlf.size(),
-		   aCount = 0,
+
+	aSize = alast.size();
+	bSize = brlf.size();
+	size_t aCount = 0,
 		   bCount = 0;
 
 
-	valarray<double> aResult( finalCubeDimentions[0] * finalCubeDimentions[1] * aSize ),
-					 bResult( finalCubeDimentions[0] * finalCubeDimentions[1] * 3 );
+
+//	omp_set_num_threads( 2 );
+//#pragma omp parallel
+//	{
+
+	aResult.resize( finalCubeDimentions[0] * finalCubeDimentions[1] * aSize );
+	bResult.resize( finalCubeDimentions[0] * finalCubeDimentions[1] * 3 );
 
 
+//	omp_set_num_threads( 2 );
+
+//	omp_set_nested( 1 );
+//#pragma omp parallel for schedule(static) collapse(2)
 
 
-	for(size_t j = 178; j < finalCubeDimentions[1] - 3; ++j)
-		for(size_t i = 183; i < finalCubeDimentions[0] - 3; ++i) {
+//	} End of parallel section
+
+	vector<long> aCubeDimentions( 3 );
+	aCubeDimentions[0] = finalCubeDimentions[0] - 6;
+	aCubeDimentions[1] = finalCubeDimentions[1] - 6;
+	aCubeDimentions[2] = aSize;
+
+	//writeImage( "acube.fits", 3, aCubeDimentions, acube );
+
+
+	cout << "Execution time is " << (double)(clock() - ts)/CLOCKS_PER_SEC << endl;
+	return 0;
+}
+
+void runThreads(void* param) {
+
+
+	for(size_t j = 178; j < 188/*finalCubeDimentions[1] - 3*/; ++j)
+		for(size_t i = 206; i < 217/*finalCubeDimentions[0] - 3*/; ++i) {
+
+//			cout << "Thread# " << omp_get_thread_num() << " entered in for" << endl;
+
+//			cout << "nesed is active? " << omp_get_nested() << " nested level= " << omp_get_active_level() << endl;
+
 			//valarray<double> a( alast.data(), alast.size() ), b( brlf.data(), brlf.size() );
 			//double *a = alast.data(), *b = brlf.data();
 			valarray<double> a( alast ), b( brlf );
@@ -636,6 +472,7 @@ int main(int argc, char* argv[]) {
 			p.x.resize( sliceSize );
 			p.y.resize( sliceSize );
 			p.yErr.resize( sliceSize );
+			p.f.resize( sliceSize );
 			p.x = x;
 			p.y = y;
 			p.yErr = w;
@@ -721,9 +558,10 @@ int main(int argc, char* argv[]) {
 			}
 
 
+/*
 //			cout << "mpfit status: " << status << " or " << result.status << endl;
 //			cout << "mpfit chi: " << result.bestnorm << endl;
-/*
+
 			for(size_t i = 0; i < p.f.size(); ++i)
 				cout << "F[" << i << "]= " << p.f[i] << endl;
 
@@ -731,13 +569,274 @@ int main(int argc, char* argv[]) {
 				cout << "a[" << i << "]= " << a[i] << endl;
 			exit( 0 );
 */
+	} // End of double for
+
+}
+
+
+
+int triplet(int m, int n, double *p, double *deviates, double **derivs, void *data) {
+	//double *par = ;
+	struct parameters *pr = (struct parameters *) data;
+	valarray<double> x( pr->x ),
+					 y( pr->y ),
+					 yErr( pr->yErr );
+/*
+	for(size_t i = 0; i < yErr.size(); ++i)
+		cout << "yErr[" << i << "]= " << yErr[i] << endl;
+*/
+	double z = p[0],
+		  inten = p[1],
+		  ww = p[2],
+		  contin = p[3],
+		  NIIinten = p[4],
+		  ha = 6562.8 * ( 1 + z ),
+		  NII_r = 6583 * ( 1 + z ),
+		  dNII_b = 6548.1 * ( 1 + z );
+
+	//cout << p[0] << " " << p[1] << " " << p[2] << " " << p[3] << " " << p[4] << endl;
+
+
+	ww = sqrt( 0.6 * 0.6 + ww * ww );//         ; default width to match sky line.
+
+	//cout << "ww= " << ww << endl;
+
+
+
+	valarray<double> Ha = inten / ( ww * piSqr ) * exp( -0.5 * ( x - ha ) * ( x - ha ) / ( ww * ww ) );
+	valarray<double> NII_a =  NIIinten / ( ww * piSqr ) * exp( -0.5 * ( x - NII_r ) * ( x - NII_r ) / ( ww * ww ) );
+	valarray<double> NII_b = NIIinten / ( 3. * ww * piSqr ) * exp( -0.5 * ( x - dNII_b ) * ( x - dNII_b ) / ( ww * ww ) );
+
+	pr->f = NII_b + Ha + NII_a  + contin;
+	pr->f *= 10000;
+
+
+	for( size_t i = 0; i < y.size(); ++i ) {
+		deviates[i] = ( y[i] - pr->f[i] ) / yErr[i];
 	}
 
+	//pr->pder.resize( x.size() * par.size() );
+/*
+	for(size_t i = 0; i < pr->f.size(); ++i)
+		cout << "pr->f[" << i << "]= " << pr->f[i] << endl;
+	for(size_t i = 0; i < pr->pder.size(); ++i)
+		cout << "pr->par[" << i << "]= " << pr->pder[i] << endl;
+*/
+	return 0;
+	//pder = fltarr(n_elements(x),n_elements(par));//   ; no value returned.
+}
 
 
-	cout << "Execution time is " << (double)(clock() - ts)/CLOCKS_PER_SEC << endl;
+void readImage(valarray<double> &contents, vector<unsigned int> &dimentions, string fileName) {
+
+	  FITS::setVerboseMode(true);
+
+	  try {
+
+		   auto_ptr<FITS> pInfile( new FITS( fileName, Read, true ) );
+
+		   PHDU& image = pInfile->pHDU();
+
+		  // valarray<double>  contents;
+
+
+		   // read all user-specifed, coordinate, and checksum keys in the image
+		   image.readAllKeys();
+
+		   image.read( contents );
+
+		   int size =  image.axes();
+		   dimentions.resize( size );
+		  // dimentions[0] = size;
+		   for(int i = 0; i < size; ++i )
+			   dimentions[i] = image.axis( i );
+
+		   cout << "size of the array is: " << contents.size() << '\n';
+
+		   // this doesn't print the data, just header info.
+	 //      std::cout << image << std::endl;
+	/*       if ( size > 2 ) {
+			   cout << fileName << ":\n";
+			   for(size_t i = 0; i < dimentions[0] * 4; ++i)
+				   cout << contents[i] << ' ';
+			   cout << endl;
+		   }
+	*/
+	/*
+		   long ax1(image.axis(0));
+		   long ax2(image.axis(1));
+
+
+		   for (long j = 0; j < ax2; j+=10)
+		   {
+				   std::ostream_iterator<double> c(std::cout,"\t");
+				   std::copy(&contents[j*ax1],&contents[(j+1)*ax1-1],c);
+				   std::cout << '\n';
+		   }
+	*/
+	 //      std::cout << std::endl;
+	  //     return ;
+
+
+	    } catch (FitsException&) {
+
+	      cerr << " Fits Exception Thrown by FitsImage class \n";
+	      cerr << " Fits file name : " << fileName << endl;
+	     // rv=1; // problem
+	    }
+}
+
+
+int tripletbr(int m, int n, double *p, double *deviates, double **derivs, void *data) {
+	//double *par = ;
+	struct parameters *pr = (struct parameters *) data;
+	valarray<double> x( pr->x ),
+					 y( pr->y ),
+					 yErr( pr->yErr );
+
+	double z = p[0],
+		  inten = p[1],
+		  ww = p[2],
+		  contin = p[3],
+		  NIIinten = p[4],
+		  brint = p[5],
+		  brww = p[6],
+		  zbr = p[7],
+		  ha = 6562.8 * ( 1 + z ),
+		  dNII_r = 6583 * ( 1 + z ),
+		  dNII_b = 6548.1 * ( 1 + z ),
+		  dbr = 6562.8 * ( 1 + zbr );
+
+	ww = sqrt( 0.6 * 0.6 + ww * ww ); //        ; default width to match sky line.
+	brww = sqrt( 0.6 * 0.6 + brww * brww );
+
+
+	//;if ww ge 10 then ww = 10
+
+	valarray<double> Ha = inten / ( ww * piSqr ) *  exp( -0.5 * ( x - ha ) * ( x - ha ) / ( ww * ww ) );
+	valarray<double> NII_r = NIIinten / ( ww * piSqr ) * exp( -0.5 * ( x - dNII_r ) * ( x - dNII_r ) / ( ww * ww ) );
+	valarray<double> NII_b = NIIinten / ( 3. * ww * piSqr ) * exp( -0.5 * ( x - dNII_b ) * ( x - dNII_b ) / ( ww * ww ) );
+	valarray<double> br = brint / ( brww * piSqr ) * exp( -0.5 * ( x - dbr ) * ( x - dbr ) / ( brww * brww ) );
+
+	pr->f = Ha + NII_r + NII_b + br + contin;
+	pr->f *= 10000;
+
+	for( size_t i = 0; i < y.size(); ++i ) {
+		deviates[i] = ( y[i] - pr->f[i] ) / yErr[i];
+	}
+	//pder = fltarr( n_elements( x ), n_elements( par ) );
 	return 0;
 }
 
 
+
+int writeImage( string fileName, long naxis, vector<long> naxes, valarray<double> va )
+{
+
+    // Create a FITS primary array containing a 2-D image
+    // declare axis arrays.
+ //   long naxis    =   2;
+  //  long naxes[2] = { 300, 200 };
+
+    // declare auto-pointer to FITS at function scope. Ensures no resources
+    // leaked if something fails in dynamic allocation.
+    auto_ptr<FITS> pFits( 0 );
+
+    try
+    {
+        // overwrite existing file if the file already exists.
+
+//        const std::string fileName("!atestfil.fit");
+
+        // Create a new FITS object, specifying the data type and axes for the primary
+        // image. Simultaneously create the corresponding file.
+
+        // this image is unsigned short data, demonstrating the cfitsio extension
+        // to the FITS standard.
+
+        pFits.reset( new FITS( fileName , static_cast<int>(DOUBLE_IMG) , naxis , naxes.data() ) );
+    }
+    catch (FITS::CantCreate*)
+    {
+          // ... or not, as the case may be.
+          return -1;
+    }
+
+    long nelements = 1;
+
+    for (long i = 0; i < naxis; ++i)
+    	nelements *= naxes[i];
+
+
+    // references for clarity.
+
+ //   long& vectorLength = naxes[0];
+ //   long& numberOfRows = naxes[1];
+ //   long nelements(1);
+
+
+    // Find the total size of the array.
+    // this is a little fancier than necessary ( It's only
+    // calculating naxes[0]*naxes[1]) but it demonstrates  use of the
+    // C++ standard library accumulate algorithm.
+
+ //   nelements = std::accumulate(&naxes[0],&naxes[naxis],1,std::multiplies<long>());
+
+    // create a new image extension with a 300x300 array containing float data.
+/*
+    std::vector<long> extAx(2,300);
+    string newName ("NEW-EXTENSION");
+    ExtHDU* imageExt = pFits->addImage(newName,FLOAT_IMG,extAx);
+
+    // create a dummy row with a ramp. Create an array and copy the row to
+    // row-sized slices. [also demonstrates the use of valarray slices].
+    // also demonstrate implicit type conversion when writing to the image:
+    // input array will be of type float.
+
+    std::valarray<int> row(vectorLength);
+    for (long j = 0; j < vectorLength; ++j) row[j] = j;
+    std::valarray<int> array(nelements);
+    for (int i = 0; i < numberOfRows; ++i)
+    {
+        array[std::slice(vectorLength*static_cast<int>(i),vectorLength,1)] = row + i;
+    }
+
+    // create some data for the image extension.
+    long extElements = std::accumulate(extAx.begin(),extAx.end(),1,std::multiplies<long>());
+    std::valarray<float> ranData(extElements);
+    const float PIBY (M_PI/150.);
+    for ( int jj = 0 ; jj < extElements ; ++jj)
+    {
+            float arg = PIBY*jj;
+            ranData[jj] = std::cos(arg);
+    }
+
+    long  fpixel(1);
+
+    // write the image extension data: also demonstrates switching between
+    // HDUs.
+    imageExt->write(fpixel,extElements,ranData);
+
+    //add two keys to the primary header, one long, one complex.
+
+    long exposure(1500);
+    std::complex<float> omega(std::cos(2*M_PI/3.),std::sin(2*M_PI/3));
+    pFits->pHDU().addKey("EXPOSURE", exposure,"Total Exposure Time");
+    pFits->pHDU().addKey("OMEGA",omega," Complex cube root of 1 ");
+
+*/
+    // The function PHDU& FITS::pHDU() returns a reference to the object representing
+    // the primary HDU; PHDU::write( <args> ) is then used to write the data.
+
+    pFits->pHDU().write( 1, nelements-1, va );
+
+
+    // PHDU's friend ostream operator. Doesn't print the entire array, just the
+    // required & user keywords, and is provided largely for testing purposes [see
+    // readImage() for an example of how to output the image array to a stream].
+
+  //  std::cout << pFits->pHDU() << std::endl;
+
+    return 0;
+}
 
