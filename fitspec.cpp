@@ -14,6 +14,7 @@
 #include <vector>
 #include <iterator>
 #include <set>
+#include <unistd.h>
 
 #include <limits>
 
@@ -51,36 +52,49 @@ vector<unsigned int> finalCubeDimentions,
 //*************************************
 
 
-
-struct parameters {
+/*
+ ********* Parameters for the fitting function
+ */
+struct Parameters {
 	valarray<double> x;
 	valarray<double> f;
 	valarray<double> y;
 	valarray<double> yErr;
 };
 
+/*
+ ********* Parameters for threads
+ */
+struct ParamsThread {
+	size_t index;		// Index of thread
+	size_t iGlobal;	// Global index of the cube, from where to start computations and where to write the result
+	size_t jGlobal;		//
+	size_t jobSize;		// Size of the computations for thread
+};
+
+
+void* runThreads (void*);
+int  triplet	(int, int, double*, double*, double**, void*);
+int  tripletbr	(int, int, double*, double*, double**, void*);
+void readImage	(valarray<double>&, vector<unsigned int>&, string);
+int  writeImage	(string, long, vector<long>, valarray<double>);
 
 
 
-void runThreads(void*);
-int  triplet(int, int, double*, double*, double**, void*);
-int  tripletbr(int, int, double*, double*, double**, void*);
-void readImage(valarray<double>&, vector<unsigned int>&, string);
-int  writeImage(string, long, vector<long>, valarray<double>);
 
 
 
 
-
-
-
-
-void readInputFile(string fileName, valarray<double> &alast, valarray<double> &brlf, size_t *start, size_t *sigStart, size_t *sliceSize) {
+/*
+********* Function to read the input file 
+*/
+void readInputFile(string fileName, valarray<double> &alast, valarray<double> &brlf, size_t *start, size_t *sigStart, size_t *sliceSize, int *nbThreads) {
 	ifstream myFile;
 	myFile.open( fileName.c_str() );
 
 	if ( myFile.is_open() ) {
 		size_t alastSize, brlfSize;
+		myFile >> (*nbThreads);
 		myFile >> (*start);
 		myFile >> (*sigStart);
 		myFile >> (*sliceSize);
@@ -102,11 +116,16 @@ void readInputFile(string fileName, valarray<double> &alast, valarray<double> &b
 }
 
 
+/*
+********** Compute average value of the valarray
+*/
 double average(valarray<double> va) {
 	return va.sum() / va.size();
 }
 
-
+/*
+********** Compute standard deviation of the valarray
+*/
 double stdev(valarray<double> va)
 {
     double E = 0;
@@ -120,7 +139,9 @@ double stdev(valarray<double> va)
 
 
 
-
+/*
+********* Helper mfunction for quicksort
+*/
 int partition(valarray<double> &A, int lo, int hi) {
   int pivotIndex = ( hi + lo ) / 2;
   double pivotValue = A[pivotIndex];
@@ -140,6 +161,9 @@ int partition(valarray<double> &A, int lo, int hi) {
   return storeIndex;
 }
 
+/*
+********** Sort the part of the valarray from *lo* to *hi* using quicksort algorithm
+*/
 void quickSort(valarray<double> &A, int lo, int hi) {
   if ( lo < hi ) {
     int p = partition( A, lo, hi );
@@ -161,6 +185,9 @@ void quickSort(valarray<double> &A, int lo, int hi) {
 //  }
 }
 
+/*
+********* Sort the entire valarray using quicksort algorithm
+*/
 void quickSort(valarray<double> &A) {
   quickSort( A, 0, A.size() - 1 );
 }
@@ -168,7 +195,11 @@ void quickSort(valarray<double> &A) {
 
 
 
-
+/*
+********* Compute the median for valarray.
+********* If number of elements is odd, median is a central element of the sorted values.
+********* If it's even, than median is the average of two central values.
+*/
 double median(valarray<double> va) {
 
 	size_t size = va.size();
@@ -180,13 +211,9 @@ double median(valarray<double> va) {
 }
 
 
-//int triplet(double x, double *par, double *f, double *pder) {
-
-
-
-//void tripletbr(double x, double *par, double *f, double *pder) {
-
-
+/*
+ ******** compute the average of 8 neighbors and the element itself in 3 dimensional array
+ */
 double avOfNeighbors(valarray<double> va, vector<unsigned int> dimentions,  size_t i, size_t j, size_t k) {
 
 	double sum = 0.0;
@@ -205,7 +232,9 @@ double avOfNeighbors(valarray<double> va, vector<unsigned int> dimentions,  size
 }
 
 
-
+/*
+ ****** Resize one dimensional array, so that *startIndex* will be first element and (*startIndex*+*count*-1) will be last
+ */
 void resizeOneDimentional(valarray<double> &va, size_t startIndex, size_t count){
 	valarray<double> tmp( count );
 	tmp = va[slice( startIndex, count, 1 )];
@@ -246,8 +275,9 @@ int main(int argc, char* argv[]) {
 	size_t startIndex,
 		   sigStartIndex;
 //		   sliceSize;
+	int nbThreads;
 
-	readInputFile( "inputfile.txt", alast, brlf, &startIndex, &sigStartIndex, &sliceSize );
+	readInputFile( "inputfile.txt", alast, brlf, &startIndex, &sigStartIndex, &sliceSize, &nbThreads );
 	readImage( finalCube, finalCubeDimentions, "coadd-HaNII.fits" );
 	readImage( sky, skyDimentions, "sky_HaNII.fits" );
 	readImage( wl, wlDimentions, "wl_HaNII.fits" );
@@ -383,8 +413,25 @@ int main(int argc, char* argv[]) {
 
 	aSize = alast.size();
 	bSize = brlf.size();
-	size_t aCount = 0,
-		   bCount = 0;
+//	size_t aCount = 0,
+//		   bCount = 0;
+
+	vector<pthread_t> thread( nbThreads );
+	vector<ParamsThread> paramsThreads( nbThreads ); //= new ParamsThread[nbThreads];
+
+	for (size_t i = 0; i < nbThreads - 1; ++i) {
+		paramsThreads[i].index = i;
+		paramsThreads[i].jobSize = finalCubeDimentions[0] / nbThreads;
+		paramsThreads[i].iGlobal = i * ( finalCubeDimentions[0] / nbThreads );
+	}
+
+	for (size_t i = 0; i < nbThreads - 1; ++i) {
+		pthread_create( &thread[i], NULL, runThreads, (void*)&paramsThreads[i] );
+	}
+
+	for (size_t i = 0; i < nbThreads - 1; ++i) {
+		pthread_join( thread[i], NULL );
+	}
 
 
 
@@ -392,7 +439,7 @@ int main(int argc, char* argv[]) {
 //#pragma omp parallel
 //	{
 
-	aResult.resize( finalCubeDimentions[0] * finalCubeDimentions[1] * aSize );
+	aResult.resize( finalCubeDimentions[0] * finalCubeDimentions[1] * 5 );
 	bResult.resize( finalCubeDimentions[0] * finalCubeDimentions[1] * 3 );
 
 
@@ -403,12 +450,12 @@ int main(int argc, char* argv[]) {
 
 
 //	} End of parallel section
-
+/*
 	vector<long> aCubeDimentions( 3 );
 	aCubeDimentions[0] = finalCubeDimentions[0] - 6;
 	aCubeDimentions[1] = finalCubeDimentions[1] - 6;
 	aCubeDimentions[2] = aSize;
-
+*/
 	//writeImage( "acube.fits", 3, aCubeDimentions, acube );
 
 
@@ -416,10 +463,16 @@ int main(int argc, char* argv[]) {
 	return 0;
 }
 
-void runThreads(void* param) {
+
+/*
+ ******* Function to be executed at threads' launch
+ */
+void* runThreads(void* param) {
+
+	ParamsThread *paramTh = (ParamsThread *) param;
 
 
-	for(size_t j = 178; j < 188/*finalCubeDimentions[1] - 3*/; ++j)
+	for(size_t j = 178; j < paramTh->jobSize/*finalCubeDimentions[1] - 3*/; ++j)
 		for(size_t i = 206; i < 217/*finalCubeDimentions[0] - 3*/; ++i) {
 
 //			cout << "Thread# " << omp_get_thread_num() << " entered in for" << endl;
@@ -468,7 +521,7 @@ void runThreads(void* param) {
 			for(size_t ind = 0; ind < w.size(); ++ind)
 				cout << "w[" << ind << "]= " << w[ind] << endl;
 */
-			struct parameters p;
+			struct Parameters p;
 			p.x.resize( sliceSize );
 			p.y.resize( sliceSize );
 			p.yErr.resize( sliceSize );
@@ -505,13 +558,13 @@ void runThreads(void* param) {
 				//double chi2r = chi1 / ( sliceSize - bSize + 1 );
 
 				if ( chi1 - chi2 >= 64 ) {
-					aResult[slice( aSize * aCount, aSize, 1 )] = b[slice( 0, 5, 1 )]; // first 5 elements of b
-					bResult[slice( 3 * bCount, bSize, 1 )] = b[slice( 5, 3, 1 )]; // last 3 elements of b
-					++bCount;
+					aResult[slice( paramTh->iGlobal, aSize, 1 )] = b[slice( 0, 5, 1 )]; // first 5 elements of b
+					bResult[slice( paramTh->iGlobal, bSize, 1 )] = b[slice( 5, 3, 1 )]; // last 3 elements of b
+	//				++bCount;
 				} else
-					aResult[slice( aSize * aCount, aSize, 1 )] = a;
+					aResult[slice( paramTh->iGlobal, aSize, 1 )] = a;
 
-				++aCount;
+//				++aCount;
 			} else {
 
 				for(size_t k = 0; k < sliceSize; ++k) {
@@ -546,13 +599,13 @@ void runThreads(void* param) {
 					//double chi2r = chi1 / ( sliceSize - bSize + 1 );
 
 					if ( chi1 - chi2 >= 64 ) {
-						aResult[slice( aSize * aCount, aSize, 1 )] = b[slice( 0, 5, 1 )]; // first 5 elements of b
-						bResult[slice( 3 * bCount, bSize, 1 )] = b[slice( 5, 3, 1 )]; // last 3 elements of b
-						++bCount;
+						aResult[slice( paramTh->iGlobal, aSize, 1 )] = b[slice( 0, 5, 1 )]; // first 5 elements of b
+						bResult[slice( paramTh->iGlobal, bSize, 1 )] = b[slice( 5, 3, 1 )]; // last 3 elements of b
+//						++bCount;
 					} else
-						aResult[slice( aSize * aCount, aSize, 1 )] = a;
+						aResult[slice( paramTh->iGlobal, aSize, 1 )] = a;
 
-					++aCount;
+//					++aCount;
 				} else
 					cout << "No line detected at i= " << i << ", j= " << j << endl;
 			}
@@ -571,13 +624,14 @@ void runThreads(void* param) {
 */
 	} // End of double for
 
+	return 0;
 }
 
 
 
 int triplet(int m, int n, double *p, double *deviates, double **derivs, void *data) {
 	//double *par = ;
-	struct parameters *pr = (struct parameters *) data;
+	struct Parameters *pr = (struct Parameters *) data;
 	valarray<double> x( pr->x ),
 					 y( pr->y ),
 					 yErr( pr->yErr );
@@ -689,7 +743,7 @@ void readImage(valarray<double> &contents, vector<unsigned int> &dimentions, str
 
 int tripletbr(int m, int n, double *p, double *deviates, double **derivs, void *data) {
 	//double *par = ;
-	struct parameters *pr = (struct parameters *) data;
+	struct Parameters *pr = (struct Parameters *) data;
 	valarray<double> x( pr->x ),
 					 y( pr->y ),
 					 yErr( pr->yErr );
@@ -754,7 +808,7 @@ int writeImage( string fileName, long naxis, vector<long> naxes, valarray<double
         // this image is unsigned short data, demonstrating the cfitsio extension
         // to the FITS standard.
 
-        pFits.reset( new FITS( fileName , static_cast<int>(DOUBLE_IMG) , naxis , naxes.data() ) );
+        pFits.reset( new FITS( fileName , static_cast<int>(DOUBLE_IMG) , naxis, naxes.data() ) );
     }
     catch (FITS::CantCreate*)
     {
