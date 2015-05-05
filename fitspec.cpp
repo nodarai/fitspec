@@ -15,6 +15,7 @@
 #include <iterator>
 #include <set>
 #include <unistd.h>
+#include <cstdio>
 
 #include <limits>
 
@@ -31,6 +32,7 @@ using namespace CCfits;
 
 // Global variables********************
 double piSqr = sqrt( 2.0 * M_PI );
+
 size_t sliceSize,
 	   aSize,
 	   bSize;
@@ -68,7 +70,6 @@ struct Parameters {
 struct ParamsThread {
 	size_t index;		// Index of thread
 	size_t iGlobal;	// Global index of the cube, from where to start computations and where to write the result
-	size_t jGlobal;		//
 	size_t jobSize;		// Size of the computations for thread
 };
 
@@ -126,14 +127,17 @@ double average(valarray<double> va) {
 /*
 ********** Compute standard deviation of the valarray
 */
-double stdev(valarray<double> va)
-{
+double stdev(valarray<double> va) {
     double E = 0;
     double ave = average( va );
     double inverse = 1.0 / static_cast<double>(va.size());
+
+    E = ( ( va - ave ) * ( va - ave ) ).sum();
+ /*
     for(size_t i = 0; i < va.size(); ++i) {
-        E += pow( static_cast<double>( va[i] ) - ave, 2 );
+        E += pow( va[i] - ave, 2 );
     }
+*/
     return sqrt( inverse * E );
 }
 
@@ -167,7 +171,7 @@ int partition(valarray<double> &A, int lo, int hi) {
 void quickSort(valarray<double> &A, int lo, int hi) {
   if ( lo < hi ) {
     int p = partition( A, lo, hi );
-    if ( ( p == (A.size() / 2) ) && ( (A.size() % 2) == 1 ) ) {
+    if ( ( p == ( A.size() / 2 ) ) && ( ( A.size() % 2 ) == 1 ) ) {
       cout << "returning" << endl;
       return;
     }
@@ -242,11 +246,24 @@ void resizeOneDimentional(valarray<double> &va, size_t startIndex, size_t count)
 	va = tmp;
 }
 
+void printArray(size_t index, valarray<double> a, string name) {
+
+cout << "Thread #" << index << " " << name << " = { ";
+for(size_t i = 0; i < a.size(); ++i)
+	cout << a[i] << ", ";
+cout << "}" << endl;
+}
+
+
 
 int main(int argc, char* argv[]) {
+
 	clock_t ts = clock();
 
-	cout << numeric_limits<double>::max() << endl;
+	cout.rdbuf()->pubsetbuf( 0, 0 ); //Turn off buffered output
+	//setvbuf( cout, NULL, _IONBF, NULL );
+
+//	cout << numeric_limits<double>::max() << endl;
 //	return 0;
 
 
@@ -416,20 +433,38 @@ int main(int argc, char* argv[]) {
 //	size_t aCount = 0,
 //		   bCount = 0;
 
+
+	//aResult.resize( finalCubeDimentions[0] * finalCubeDimentions[1] * 5 );
+	//bResult.resize( finalCubeDimentions[0] * finalCubeDimentions[1] * 3 );
+	aResult.resize( finalCube.size() );
+	bResult.resize( finalCube.size() );
+
 	vector<pthread_t> thread( nbThreads );
 	vector<ParamsThread> paramsThreads( nbThreads ); //= new ParamsThread[nbThreads];
 
-	for (size_t i = 0; i < nbThreads - 1; ++i) {
+	for (size_t i = 0; i < nbThreads; ++i) {
 		paramsThreads[i].index = i;
-		paramsThreads[i].jobSize = finalCubeDimentions[0] / nbThreads;
-		paramsThreads[i].iGlobal = i * ( finalCubeDimentions[0] / nbThreads );
+		paramsThreads[i].jobSize = ( finalCubeDimentions[0] - 6 ) / nbThreads;            //Calculations are done from index 3 to  *finalCubeDimentions[0]*-3
+		paramsThreads[i].iGlobal = i * ( ( finalCubeDimentions[0] - 6 ) / nbThreads );	  //Calculations are done from index 3 to  *finalCubeDimentions[0]*-3
 	}
 
-	for (size_t i = 0; i < nbThreads - 1; ++i) {
+	for (size_t i = 0; i < ( finalCubeDimentions[0] - 6 ) % nbThreads; ++i) {
+		++paramsThreads[i].jobSize;
+	}
+
+	paramsThreads[0].iGlobal = 3; //We are starting calculations from index 3
+
+	//paramsThreads[nbThreads - 1].index = nbThreads - 1;
+	//paramsThreads[nbThreads - 1].jobSize = finalCubeDimentions[0] / nbThreads + finalCubeDimentions[0] % nbThreads;
+	//paramsThreads[nbThreads - 1].iGlobal = ( nbThreads - 1 ) * ( finalCubeDimentions[0] / nbThreads );
+
+
+
+	for (size_t i = 0; i < nbThreads; ++i) {
 		pthread_create( &thread[i], NULL, runThreads, (void*)&paramsThreads[i] );
 	}
 
-	for (size_t i = 0; i < nbThreads - 1; ++i) {
+	for (size_t i = 0; i < nbThreads; ++i) {
 		pthread_join( thread[i], NULL );
 	}
 
@@ -439,8 +474,7 @@ int main(int argc, char* argv[]) {
 //#pragma omp parallel
 //	{
 
-	aResult.resize( finalCubeDimentions[0] * finalCubeDimentions[1] * 5 );
-	bResult.resize( finalCubeDimentions[0] * finalCubeDimentions[1] * 3 );
+
 
 
 //	omp_set_num_threads( 2 );
@@ -471,9 +505,21 @@ void* runThreads(void* param) {
 
 	ParamsThread *paramTh = (ParamsThread *) param;
 
+	cout << "Thread #" << paramTh->index << " started working." << endl;
 
-	for(size_t j = 178; j < paramTh->jobSize/*finalCubeDimentions[1] - 3*/; ++j)
-		for(size_t i = 206; i < 217/*finalCubeDimentions[0] - 3*/; ++i) {
+
+	valarray<double> x( wl ), y( sliceSize ), sig( sliceSize );
+	valarray<double> a( alast ), b( brlf );
+	valarray<double> w( sliceSize );
+	w = var / median( var );
+
+	for(size_t i = 0; i < paramTh->jobSize/*finalCubeDimentions[1] - 3*/; ++i) {
+
+		size_t realInd = i + paramTh->iGlobal; // i index of the finalcube
+
+		for(size_t j = 3; j < finalCubeDimentions[0] - 3; ++j) {
+
+			size_t  ij = j * finalCubeDimentions[0] + realInd;
 
 //			cout << "Thread# " << omp_get_thread_num() << " entered in for" << endl;
 
@@ -481,17 +527,27 @@ void* runThreads(void* param) {
 
 			//valarray<double> a( alast.data(), alast.size() ), b( brlf.data(), brlf.size() );
 			//double *a = alast.data(), *b = brlf.data();
-			valarray<double> a( alast ), b( brlf );
+
 
 			//doule a[5] = { 0.0543693, 10.1, 2.0, 0.0 10.1 }:
 		//	size_t i = 35;
 		//	j = 45;
-			valarray<double> x( wl ), y( sliceSize ), sig( sliceSize );
-			size_t  ij =  i * finalCubeDimentions[2] * finalCubeDimentions[1] + finalCubeDimentions[2] * j;
+
+
+			//old version of indexing
+			//	size_t  ij =  i * finalCubeDimentions[2] * finalCubeDimentions[1] + finalCubeDimentions[2] * j;
+
+
+
+			/*
+			size_t ijk = k * finalCubeDimentions[0] * finalCubeDimentions[1] + ij;
+			*/
 
 			for(size_t k = 0; k < sliceSize; ++k) {
 
-				size_t ijk = k + ij;
+				//old version of indexing
+				//size_t ijk = k + ij;
+				size_t ijk = k * finalCubeDimentions[0] * finalCubeDimentions[1] + ij;
 
 				//cout << "finalCube[" << i << "][" << j << "][" << k << "]= " << finalCube[ijk] << endl;
 				//cout << "finalCube[" << k << "]= " << finalCube[k] << endl;
@@ -503,8 +559,7 @@ void* runThreads(void* param) {
 			double sig2 = stdev( sig );
 			sig2 *= sig2;
 
-			valarray<double> w( sliceSize );
-			w = var / median( var );
+
 
 			double av = average( y );
 
@@ -540,7 +595,7 @@ void* runThreads(void* param) {
 			mpfit( tripletbr, sliceSize, aSize, &a[0], 0, 0, (void *) &p, &result );
 
 			if( result.status < 0 ) {
-				cout << "Error while fitting on index i= " << i << " j= " << j << " !" << endl;
+				cout << "Error while fitting on index i= " << realInd << " j= " << j << " !" << endl;
 				cout << "Error status: " << result.status << endl;
 		//		continue;
 			}
@@ -558,18 +613,21 @@ void* runThreads(void* param) {
 				//double chi2r = chi1 / ( sliceSize - bSize + 1 );
 
 				if ( chi1 - chi2 >= 64 ) {
-					aResult[slice( paramTh->iGlobal, aSize, 1 )] = b[slice( 0, 5, 1 )]; // first 5 elements of b
-					bResult[slice( paramTh->iGlobal, bSize, 1 )] = b[slice( 5, 3, 1 )]; // last 3 elements of b
+					aResult[slice( ij, aSize, 1 )] = b[slice( 0, 5, 1 )]; // first 5 elements of b
+					bResult[slice( ij, bSize, 1 )] = b[slice( 5, 3, 1 )]; // last 3 elements of b
+					printArray( paramTh->index, b, "b" );
 	//				++bCount;
-				} else
-					aResult[slice( paramTh->iGlobal, aSize, 1 )] = a;
+				} else {
+					aResult[slice( ij, aSize, 1 )] = a;
+					printArray( paramTh->index, a, "a" );
+				}
 
 //				++aCount;
 			} else {
 
 				for(size_t k = 0; k < sliceSize; ++k) {
-					y[k] = avOfNeighbors( finalCube, finalCubeDimentions, i, j, k );        // finalCube[ijk];
-					sig[k] = avOfNeighbors( sig2d, finalCubeDimentions, i, j, k );              //sig2d[ijk];
+					y[k] = avOfNeighbors( finalCube, finalCubeDimentions, realInd, j, k );        // finalCube[ijk];
+					sig[k] = avOfNeighbors( sig2d, finalCubeDimentions, realInd, j, k );              //sig2d[ijk];
 				}
 
 				sig2 = stdev( sig );
@@ -583,7 +641,7 @@ void* runThreads(void* param) {
 				mpfit( tripletbr, sliceSize, aSize, &a[0], 0, 0, (void *) &p, &result );
 
 				if( result.status < 0 ) {
-					cout << "Error while fitting on index i= " << i << " j= " << j << " !" << endl;
+					cout << "Error while fitting on index i= " << realInd << " j= " << j << " !" << endl;
 					cout << "Error status: " << result.status << endl;
 				//	continue;
 				}
@@ -599,15 +657,21 @@ void* runThreads(void* param) {
 					//double chi2r = chi1 / ( sliceSize - bSize + 1 );
 
 					if ( chi1 - chi2 >= 64 ) {
-						aResult[slice( paramTh->iGlobal, aSize, 1 )] = b[slice( 0, 5, 1 )]; // first 5 elements of b
-						bResult[slice( paramTh->iGlobal, bSize, 1 )] = b[slice( 5, 3, 1 )]; // last 3 elements of b
-//						++bCount;
-					} else
-						aResult[slice( paramTh->iGlobal, aSize, 1 )] = a;
+						aResult[slice( ij, aSize, 1 )] = b[slice( 0, 5, 1 )]; // first 5 elements of b
+						bResult[slice( ij, bSize, 1 )] = b[slice( 5, 3, 1 )]; // last 3 elements of b
+
+						printArray( paramTh->index, b, "b9" );
+
+						//						++bCount;
+					} else {
+						aResult[slice( ij, aSize, 1 )] = a;
+
+						printArray( paramTh->index, a, "a9" );
+					}
 
 //					++aCount;
 				} else
-					cout << "No line detected at i= " << i << ", j= " << j << endl;
+					cout << "No line detected at i= " << realInd << ", j= " << j << endl;
 			}
 
 
@@ -622,7 +686,8 @@ void* runThreads(void* param) {
 				cout << "a[" << i << "]= " << a[i] << endl;
 			exit( 0 );
 */
-	} // End of double for
+		} // End of first for
+	}  // End of second for
 
 	return 0;
 }
