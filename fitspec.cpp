@@ -208,7 +208,9 @@ double median(valarray<double> va) {
 
 	size_t size = va.size();
 
+	clock_t ts = clock();
 	quickSort( va );
+	cout << "Sorting time is " << (double)(clock() - ts)/CLOCKS_PER_SEC << endl;
 
 	return size % 2 ? va[size / 2] : ( va[size / 2] + va[size / 2 + 1] ) / 2;
 
@@ -218,21 +220,68 @@ double median(valarray<double> va) {
 /*
  ******** compute the average of 8 neighbors and the element itself in 3 dimensional array
  */
-double avOfNeighbors(valarray<double> va, vector<unsigned int> dimentions,  size_t i, size_t j, size_t k) {
+void avOfNeighbors (valarray<double> &y, valarray<double> va,  size_t i, size_t j, size_t neibSize) {
 
 	double sum = 0.0;
+	unsigned int dim12 = finalCubeDimentions[2] * finalCubeDimentions[1];
+	unsigned int dim2 = finalCubeDimentions[2];
+//	unsigned int jdim2 = finalCubeDimentions[2] * j;
+//	size_t k = 0;
+/*
+	sum += va[i 		* dim12 + dim2 * j 		   + k]
+		 + va[i 		* dim12 + dim2 * ( j - 1 ) + k]
+		 + va[i 		* dim12 + dim2 * ( j + 1 ) + k]
+		 + va[( i - 1 ) * dim12 + dim2 * j 		   + k]
+		 + va[( i - 1 ) * dim12 + dim2 * ( j - 1 ) + k]
+		 + va[( i - 1 ) * dim12 + dim2 * ( j + 1 ) + k]
+		 + va[( i + 1 ) * dim12 + dim2 * j 		   + k]
+		 + va[( i + 1 ) * dim12 + dim2 * ( j - 1 ) + k]
+		 + va[( i + 1 ) * dim12 + dim2 * ( j + 1 ) + k];
 
-	sum += va[i * dimentions[2] * dimentions[1] + dimentions[2] * j + k]
-		 + va[i * dimentions[2] * dimentions[1] + dimentions[2] * ( j - 1 ) + k]
-		 + va[i * dimentions[2] * dimentions[1] + dimentions[2] * ( j + 1 ) + k]
-		 + va[( i - 1 ) * dimentions[2] * dimentions[1] + dimentions[2] * j + k]
-		 + va[( i - 1 ) * dimentions[2] * dimentions[1] + dimentions[2] * ( j - 1 ) + k]
-		 + va[( i - 1 ) * dimentions[2] * dimentions[1] + dimentions[2] * ( j + 1 ) + k]
-		 + va[( i + 1 ) * dimentions[2] * dimentions[1] + dimentions[2] * j + k]
-		 + va[( i + 1 ) * dimentions[2] * dimentions[1] + dimentions[2] * ( j - 1 ) + k]
-		 + va[( i + 1 ) * dimentions[2] * dimentions[1] + dimentions[2] * ( j + 1 ) + k];
+	cout << sum / 9.0 << " ";
+	sum = 0.0;
 
-	return sum / 9.0;
+	for(k = 1; k < sliceSize; ++k) {
+		for(size_t l = i - neibSize / 2; l <= i + neibSize / 2; ++l)
+			for(size_t m = j - neibSize / 2; m <= j + neibSize / 2; ++m)
+				sum+= va[l * dim12 + m * dim2 + k];
+		cout << sum / 9.0 << " ";
+		sum = 0.0;
+	}
+	cout << endl;
+*/
+	//size_t ar[9];// =
+	vector<size_t> v ( neibSize * neibSize );
+	for(size_t n = 0, l = i - neibSize / 2; l <= i + neibSize / 2; ++l)
+		for(size_t m = j - neibSize / 2; m <= j + neibSize / 2; ++m)
+			v[n++] = l * dim12 + m * dim2;
+
+	for(size_t k = 0; k < sliceSize; ++k, sum = 0.0) {
+		for(size_t l = 0; l < v.size(); ++l)
+			sum+= va[v[l] + k];
+		y[k] =  sum / static_cast<double> ( v.size() ) ;
+//		cout << y[k] << " ";
+//		sum = 0.0;
+	}
+//	cout << endl;
+/*
+
+	for(size_t l = i - neibSize / 2; l <= i + neibSize / 2; ++l)
+		for(size_t m = j - neibSize / 2; m <= j + neibSize / 2; ++m)
+			sum+= va[l * dim12 + m * dim2 + k];
+
+	y[k] = sum/ 9.0;
+
+
+	for(k = 1; k < sliceSize; ++k) {
+		for(size_t l = i - neibSize / 2, m = j - neibSize / 2 - 1; l < i + neibSize / 2; ++l)
+			sum -= va[l * dim12 + j * dim2 + k];
+		for(size_t l = i - neibSize / 2, m = j + neibSize / 2; l < i + neibSize / 2; ++l)
+			sum -= va[l * dim12 + j * dim2 + k];
+	}
+*/
+
+//	return sum / 9.0;
 }
 
 
@@ -409,10 +458,12 @@ int main(int argc, char* argv[]) {
 	finalCubeDimentions[2] = sliceSize;
 	finalCube = tmpFinalCube;
 	tmpFinalCube.resize( 0 );
+
+	/*
 	cout << "The size of sig2d is " << sig2d.size() << endl;
 	cout << "The size of tmpFinalCube is " << tmpFinalCube.size() << endl;
 	cout << "The size of finalCube is " << finalCube.size() << endl;
-
+*/
 
 
 /*
@@ -444,8 +495,8 @@ int main(int argc, char* argv[]) {
 
 	for (size_t i = 0; i < nbThreads; ++i) {
 		paramsThreads[i].index = i;
-		paramsThreads[i].jobSize = ( finalCubeDimentions[0] - 6 ) / nbThreads;            //Calculations are done from index 3 to  *finalCubeDimentions[0]*-3
-		paramsThreads[i].iGlobal = i * ( ( finalCubeDimentions[0] - 6 ) / nbThreads );	  //Calculations are done from index 3 to  *finalCubeDimentions[0]*-3
+		paramsThreads[i].jobSize = ( finalCubeDimentions[0] - 6 ) / nbThreads;            //Calculations are made from index 3 to  *finalCubeDimentions[0]*-3
+		paramsThreads[i].iGlobal = i * ( ( finalCubeDimentions[0] - 6 ) / nbThreads );	  //Calculations are made from index 3 to  *finalCubeDimentions[0]*-3
 	}
 
 	for (size_t i = 0; i < ( finalCubeDimentions[0] - 6 ) % nbThreads; ++i) {
@@ -513,7 +564,7 @@ void* runThreads(void* param) {
 	valarray<double> w( sliceSize );
 	w = var / median( var );
 
-	for(size_t i = 0; i < paramTh->jobSize/*finalCubeDimentions[1] - 3*/; ++i) {
+	for(size_t i = 0; i < paramTh->jobSize /*finalCubeDimentions[1] - 3*/; ++i) {
 
 		size_t realInd = i + paramTh->iGlobal; // i index of the finalcube
 
@@ -625,10 +676,10 @@ void* runThreads(void* param) {
 //				++aCount;
 			} else {
 
-				for(size_t k = 0; k < sliceSize; ++k) {
-					y[k] = avOfNeighbors( finalCube, finalCubeDimentions, realInd, j, k );        // finalCube[ijk];
-					sig[k] = avOfNeighbors( sig2d, finalCubeDimentions, realInd, j, k );              //sig2d[ijk];
-				}
+//				clock_t neighb = clock();
+				avOfNeighbors( y, finalCube, realInd, j, 3 );
+				avOfNeighbors( sig, sig2d, realInd, j, 3 );
+//				cout << "Neighbor count time is " << (double)(clock() - neighb)/CLOCKS_PER_SEC << endl;
 
 				sig2 = stdev( sig );
 				sig2 *= sig2;
