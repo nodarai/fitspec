@@ -16,8 +16,9 @@
 #include <set>
 #include <unistd.h>
 #include <cstdio>
-
 #include <limits>
+
+#include <mpi.h>
 
 #include <CCfits/CCfits>
 
@@ -490,13 +491,31 @@ int main(int argc, char* argv[]) {
 	aResult.resize( finalCube.size() );
 	bResult.resize( finalCube.size() );
 
+
+
+
+	int rank,
+	    worldSize,
+		provided;
+
+	MPI_Init_thread ( &argc, &argv, MPI_THREAD_MULTIPLE, &provided );      /* starts MPI */
+	if ( provided != MPI_THREAD_MULTIPLE )
+	{
+		printf( "Sorry, this MPI implementation does not support multiple threads\n" );
+		MPI_Abort( MPI_COMM_WORLD, 1 );
+		return 1;
+	}
+
+	MPI_Comm_rank ( MPI_COMM_WORLD, &rank );        /* get current process id */
+	MPI_Comm_size ( MPI_COMM_WORLD, &worldSize );        /* get number of processes */
+
 	vector<pthread_t> thread( nbThreads );
 	vector<ParamsThread> paramsThreads( nbThreads ); //= new ParamsThread[nbThreads];
 
 	for (size_t i = 0; i < nbThreads; ++i) {
 		paramsThreads[i].index = i;
-		paramsThreads[i].jobSize = ( finalCubeDimentions[0] - 6 ) / nbThreads;            //Calculations are made from index 3 to  *finalCubeDimentions[0]*-3
-		paramsThreads[i].iGlobal = i * ( ( finalCubeDimentions[0] - 6 ) / nbThreads );	  //Calculations are made from index 3 to  *finalCubeDimentions[0]*-3
+		paramsThreads[i].jobSize = ( finalCubeDimentions[0] - 6 ) / ( nbThreads * worldSize);            //Calculations are made from index 3 to  *finalCubeDimentions[0]*-3
+		paramsThreads[i].iGlobal = i * ( ( finalCubeDimentions[0] - 6 ) / ( nbThreads * worldSize ) );	  //Calculations are made from index 3 to  *finalCubeDimentions[0]*-3
 	}
 
 	for (size_t i = 0; i < ( finalCubeDimentions[0] - 6 ) % nbThreads; ++i) {
