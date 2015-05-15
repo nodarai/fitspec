@@ -75,12 +75,12 @@ struct ParamsThread {
 };
 
 
-void* runThreads (void*);
-int  triplet	(int, int, double*, double*, double**, void*);
-int  tripletbr	(int, int, double*, double*, double**, void*);
-void readImage	(valarray<double>&, vector<unsigned int>&, string);
-int  writeImage	(string, long, vector<long>, valarray<double>);
-
+void* runThreads   (void*);
+int  triplet	   (int, int, double*, double*, double**, void*);
+int  tripletbr	   (int, int, double*, double*, double**, void*);
+void readImage	   (valarray<double>&, vector<unsigned int>&, string);
+int  writeImage	   (string, long, vector<long>, valarray<double>);
+void printMpiError (int);
 
 
 
@@ -209,9 +209,9 @@ double median(valarray<double> va) {
 
 	size_t size = va.size();
 
-	clock_t ts = clock();
+//	clock_t ts = clock();
 	quickSort( va );
-	cout << "Sorting time is " << (double)(clock() - ts)/CLOCKS_PER_SEC << endl;
+//	cout << "Sorting time is " << (double)(clock() - ts)/CLOCKS_PER_SEC << endl;
 
 	return size % 2 ? va[size / 2] : ( va[size / 2] + va[size / 2 + 1] ) / 2;
 
@@ -297,18 +297,20 @@ void resizeOneDimentional(valarray<double> &va, size_t startIndex, size_t count)
 }
 
 void printArray(size_t index, valarray<double> a, string name) {
-
+/*
 cout << "Thread #" << index << " " << name << " = { ";
 for(size_t i = 0; i < a.size(); ++i)
 	cout << a[i] << ", ";
 cout << "}" << endl;
+*/
 }
 
 
 
 int main(int argc, char* argv[]) {
 
-	clock_t ts = clock();
+	time_t ts = time( NULL );
+	time( &ts );
 
 	cout.rdbuf()->pubsetbuf( 0, 0 ); //Turn off buffered output
 	//setvbuf( cout, NULL, _IONBF, NULL );
@@ -518,7 +520,7 @@ int main(int argc, char* argv[]) {
 		paramsThreads[i].iGlobal = i * ( ( finalCubeDimentions[0] - 6 ) / ( nbThreads * worldSize ) );	  //Calculations are made from index 3 to  *finalCubeDimentions[0]*-3
 	}
 
-	for (size_t i = 0; i < ( finalCubeDimentions[0] - 6 ) % nbThreads; ++i) {
+	for (size_t i = 0; i < ( finalCubeDimentions[0] - 6 ) % (nbThreads * worldSize ); ++i) {
 		++paramsThreads[i].jobSize;
 	}
 
@@ -538,6 +540,32 @@ int main(int argc, char* argv[]) {
 		pthread_join( thread[i], NULL );
 	}
 
+	if ( rank == 0 ) {
+		//receive
+		int error;
+		valarray<double> aOthers( aResult.size() );
+		valarray<double> bOthers( bResult.size() );
+
+		for(size_t i = 1; i < worldSize; ++i) {
+			error = MPI_Recv( &aOthers[0], aResult.size(), MPI_DOUBLE, i, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE );
+			printMpiError( error );
+			aResult += aOthers;
+
+			error = MPI_Recv( &bOthers[0], bResult.size(), MPI_DOUBLE, i, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE );
+			printMpiError( error );
+			bResult += bOthers;
+		}
+
+	} else {
+		//send
+		int error;
+		error = MPI_Send( &aResult, aResult.size(), MPI_DOUBLE, 0, 0, MPI_COMM_WORLD );
+		printMpiError( error );
+
+		error = MPI_Send( &bResult, bResult.size(), MPI_DOUBLE, 0, 1, MPI_COMM_WORLD );
+		printMpiError( error );
+
+	}
 
 
 //	omp_set_num_threads( 2 );
@@ -560,10 +588,13 @@ int main(int argc, char* argv[]) {
 	aCubeDimentions[1] = finalCubeDimentions[1] - 6;
 	aCubeDimentions[2] = aSize;
 */
-	//writeImage( "acube.fits", 3, aCubeDimentions, acube );
+	//writeImage( "acube.fits", 3, vector<long>(finalCubeDimentions[0], finalCubeDimentions[1], finalCubeDimentions[2]), aResult );
 
 
-	cout << "Execution time is " << (double)(clock() - ts)/CLOCKS_PER_SEC << endl;
+	//Here ends the process-parallel routines
+	MPI_Finalize();
+
+	cout << "Execution time is " <<  time( NULL ) - ts << " seconds." << endl;
 	return 0;
 }
 
@@ -583,7 +614,7 @@ void* runThreads(void* param) {
 	valarray<double> w( sliceSize );
 	w = var / median( var );
 
-	for(size_t i = 0; i < paramTh->jobSize /*finalCubeDimentions[1] - 3*/; ++i) {
+	for(size_t i = 0; i < 1/*( i < paramTh->jobSize ) && ( i + paramTh->iGlobal < finalCubeDimentions[1] - 3 )*/; ++i) {
 
 		size_t realInd = i + paramTh->iGlobal; // i index of the finalcube
 
@@ -740,8 +771,8 @@ void* runThreads(void* param) {
 					}
 
 //					++aCount;
-				} else
-					cout << "No line detected at i= " << realInd << ", j= " << j << endl;
+				}  else
+					cout << "Thread #" << realInd << ": No line detected at i= " << realInd << ", j= " << j << endl;
 			}
 
 
@@ -1029,7 +1060,25 @@ int writeImage( string fileName, long naxis, vector<long> naxes, valarray<double
     return 0;
 }
 
-
+void printMpiError( int error ) {
+    switch( error ) {
+    case MPI_SUCCESS:
+  	  //cout << "MPI succeed to start procedure\n";
+  	  break;
+    case MPI_ERR_COMM:
+  	  cout << "MPI failed at invalid communicator" << endl; break;
+    case MPI_ERR_COUNT:
+  	  cout << "MPI failed at invalid count" << endl; break;
+    case MPI_ERR_TYPE:
+  	  cout << "MPI failed at invalid data type argument" << endl; break;
+    case MPI_ERR_TAG:
+  	  cout << "MPI failed at invalid tag" << endl; break;
+    case MPI_ERR_RANK:
+  	  cout << "MPI failed at invalid rank" << endl; break;
+    case MPI_ERR_INTERN:
+  	  cout << "MPI failed at invalid MPICH implementation" << endl; break;
+    }
+}
 
 
 
