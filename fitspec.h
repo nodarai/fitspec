@@ -27,7 +27,7 @@ struct Parameters {
  */
 struct ParamsThread {
 	size_t index;		// Index of thread
-	size_t iGlobal;	// Global index of the cube, from where to start computations and where to write the result
+	size_t jGlobal;	// Global index of the cube, from where to start computations and where to write the result
 	size_t jobSize;		// Size of the computations for thread
 };
 

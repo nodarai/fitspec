@@ -1,7 +1,7 @@
 {
 "number_of_threads": { 
 	"doc": "Number of threads to use when running", 
-	"value": 2
+	"value": 1
 	},
 "start_index": { 
 	"doc": "Start to extracting points from finalcube at this index",
@@ -28,19 +28,31 @@
 	"doc": "As we have two result files, prefixes a and b will be added to the resultfile"
 	},
 "finalcube": {
-	"value": "coadd-HaNII.fits",
+	"value": "data/coadd-HaNII.fits",
 	"doc": "Contains finalcube data"
 	},
 "sky": {
-	"value": "sky_HaNII.fits",
+	"value": "data/sky_HaNII.fits",
 	"doc": "Contains sky data"
 	},
 "wl": {
-	"value": "wl_HaNII.fits",
+	"value": "data/wl_HaNII.fits",
 	"doc": "Contains wl data"
 	},
 "fitting_function": {
 	"value": "triplet",
 	"doc": "Candidates are: triplet, Ha, Hb, OI, SII"
+	},
+"alpha": {
+	"value": 0.01,
+	"doc": "Probability to accept the fit"
+	},
+"chi2lim": {
+	"value": 49.0,
+	"doc": ""
+	},
+"chi2lim2": {
+	"value": 64.0,
+	"doc": ""
 	}
 }
