@@ -156,7 +156,7 @@ vector<double> readArrayJSON(cJSON **iter) {
 
 
 int readInputFileJSON(string fileName, string &resultfile, vector<string> &inputFits,
-					  	 size_t *start, size_t *sigStart, int *nbThreads) {
+					  	 size_t *start, size_t *sigStart, size_t *nbThreads) {
 
 	ifstream in( fileName.c_str() );
 
@@ -415,10 +415,7 @@ void quickSort(valarray<double> &A) {
 double median(valarray<double> va) {
 
 	size_t size = va.size();
-
-//	clock_t ts = clock();
 	quickSort( va );
-//	cout << "Sorting time is " << (double)(clock() - ts)/CLOCKS_PER_SEC << endl;
 
 	return size % 2 ? va[size / 2] : ( va[size / 2] + va[size / 2 + 1] ) / 2;
 
@@ -495,38 +492,13 @@ void avOfNeighbors (valarray<double> &y,/* valarray<double> va, * size_t i, size
 
 void avOfNeighbors (valarray<double> &y, bool fc, size_t i, size_t j, size_t neibSize) {
 
-	/*
-	if ( fc == true )
-		sum += finalCube[ijk];
-	else
-		sum += sig2d[ijk];
-	*/
-
 	double* va = static_cast<double*>(  fc ? &finalCube[0] : &sig2d[0] );
 
 	double sum = 0.0;
-	//size_t dim12 = finalCubeDimentions[2] * finalCubeDimentions[1];
-	//size_t dim2 = finalCubeDimentions[2];
 
 	size_t dim0 = finalCubeDimentions[0];
 	size_t dim01 = finalCubeDimentions[0] * finalCubeDimentions[1];
 
-//	unsigned int jdim2 = finalCubeDimentions[2] * j;
-/*	size_t k = 0;
-
-	sum += va[i 		* dim12 + dim2 * j 		   + k]
-		 + va[i 		* dim12 + dim2 * ( j - 1 ) + k]
-		 + va[i 		* dim12 + dim2 * ( j + 1 ) + k]
-		 + va[( i - 1 ) * dim12 + dim2 * j 		   + k]
-		 + va[( i - 1 ) * dim12 + dim2 * ( j - 1 ) + k]
-		 + va[( i - 1 ) * dim12 + dim2 * ( j + 1 ) + k]
-		 + va[( i + 1 ) * dim12 + dim2 * j 		   + k]
-		 + va[( i + 1 ) * dim12 + dim2 * ( j - 1 ) + k]
-		 + va[( i + 1 ) * dim12 + dim2 * ( j + 1 ) + k];
-
-	cout << sum / 9.0 << " ";
-	sum = 0.0;
-*/
 	for(size_t k = 0; k < sliceSize; ++k) {
 		for(size_t l = j - neibSize / 2; l <= j + neibSize / 2; ++l) {
 			size_t ij = l * dim0 + k * dim01;
@@ -537,67 +509,8 @@ void avOfNeighbors (valarray<double> &y, bool fc, size_t i, size_t j, size_t nei
 			}
 		}
 		y[k] = sum / 9.0;
-	//	cout << sum / 9.0 << " ";
 		sum = 0.0;
 	}
-	//cout << endl;*/
-
-	/*
-	//size_t ar[9];// =
-	vector<size_t> v ( neibSize * neibSize );
-	for(size_t n = 0, l = i - neibSize / 2; l <= i + neibSize / 2; ++l)
-		for(size_t m = j - neibSize / 2; m <= j + neibSize / 2; ++m)
-			v[n++] = l * dim1 + m;
-
-
-	//cout << endl << "y before sum" << endl;
-	//printArray( 6, y, "y_before");
-
-
-	for(size_t k = 0; k < sliceSize; ++k, sum = 0.0) {
-		for(size_t l = 0; l < v.size(); ++l) {
-
-			size_t ijk = v[l] + k * dim01;
-
-			if ( fc == true )
-				sum += finalCube[ijk];
-			else
-				sum += sig2d[ijk];
-	//		cout << finalCube[v[l] + k] << " ";
-		}
-	//	cout << endl;
-
-		y[k] =  sum / static_cast <double> ( v.size() );
-		//cout << sum << " ";
-//		sum = 0.0;
-	}
-	//printArray( 5, y, "y");
-//	cout << endl;*/
-/*
-	for(size_t l = i - neibSize / 2; l <= i + neibSize / 2; ++l) {
-		for(size_t m = j - neibSize / 2; m <= j + neibSize / 2; ++m) {
-
-			size_t ijk =l * dim12 + m * dim2 + k;
-			//sum+= va[l * dim12 + m * dim2 + k];
-			if ( fc == true )
-				sum += finalCube[ijk];
-			else
-				sum += sig2d[ijk];
-		}
-	}
-
-	y[k] = sum/ 9.0;
-
-
-	for(k = 1; k < sliceSize; ++k) {
-		for(size_t l = i - neibSize / 2, m = j - neibSize / 2 - 1; l < i + neibSize / 2; ++l)
-			sum -= va[l * dim12 + j * dim2 + k];
-		for(size_t l = i - neibSize / 2, m = j + neibSize / 2; l < i + neibSize / 2; ++l)
-			sum -= va[l * dim12 + j * dim2 + k];
-	}
-
-*/
-//	return sum / 9.0;
 }
 
 /*
@@ -618,9 +531,6 @@ cout << "Thread #" << index << " " << name << " = { ";
 for(size_t i = 0; i < a.size(); ++i)
 	cout << a[i] << ", ";
 cout << "}" << endl;
-
-//exit( 0 );
-
 }
 
 
@@ -644,7 +554,6 @@ int main(int argc, char* argv[]) {
 	time( &ts );
 
 	cout.rdbuf()->pubsetbuf( 0, 0 ); //Turn off buffered output
-	//setvbuf( cout, NULL, _IONBF, NULL );
 
 //	cout << numeric_limits<double>::max() << endl;
 //	return 0;
@@ -664,27 +573,12 @@ int main(int argc, char* argv[]) {
 		   } else
 			   cout << "Only one parameter should be passed. \nThe rest will be ignored" << '\n';
 
-/*
-	valarray<double> finalCube,
-					 sky,
-					 wl,
-					 var;
-
-	vector<unsigned int> finalCubeDimentions,
-						 skyDimentions,
-						 wlDimentions;
-	valarray<double> alast,
-				   brlf;
-*/
 	size_t startIndex,
-		   sigStartIndex;
-//		   sliceSize;
-	int nbThreads;
+		   sigStartIndex,
+		   nbThreads;
 
 	//readInputFile( "inputfile.txt", alast, brlf, &startIndex, &sigStartIndex, &sliceSize, &nbThreads );
 	readInputFileJSON( inputFile, resultFile, inputFits, &startIndex, &sigStartIndex, &nbThreads );
-
-
 
 	readImage( finalCube, finalCubeDimentions, inputFits[0] );
 	readImage( sky, skyDimentions, inputFits[1] );
@@ -779,12 +673,6 @@ int main(int argc, char* argv[]) {
 
 
 
-
-
-
-
-
-
 /*
 	valarray<double> tmpFinalCube( finalCubeDimentions[0] * finalCubeDimentions[1] * sliceSize );
 
@@ -797,8 +685,6 @@ int main(int argc, char* argv[]) {
 
 
 
-
-
 	size_t first = startIndex,
 		   last = sigStartIndex + sliceSize;
 	if( sigStartIndex < startIndex ) {
@@ -806,9 +692,6 @@ int main(int argc, char* argv[]) {
 		last = startIndex + sliceSize;
 	}
 */
-
-
-
 
 
 
@@ -861,8 +744,6 @@ int main(int argc, char* argv[]) {
 
 	*/
 
-
-
 /*
 	vector<long> aResDims2( 3 );
 	aResDims2[0] = finalCubeDimentions[0];
@@ -904,13 +785,13 @@ int main(int argc, char* argv[]) {
 
 
 	vector<long> aResDims( 3 );
-	aResDims[0] = finalCubeDimentions[0] - 6;
-	aResDims[1] = finalCubeDimentions[1] - 6;
+	aResDims[0] = finalCubeDimentions[0];// - 6;
+	aResDims[1] = finalCubeDimentions[1];// - 6;
 	aResDims[2] = aSize;
 
 	vector<long> bResDims( 3 );
-	bResDims[0] = finalCubeDimentions[0] - 6;
-	bResDims[1] = finalCubeDimentions[1] - 6;
+	bResDims[0] = finalCubeDimentions[0];// - 6;
+	bResDims[1] = finalCubeDimentions[1];// - 6;
 	bResDims[2] = bSize - aSize;
 
 	aResult.resize( aResDims[0] * aResDims[1] * aResDims[2] );
@@ -955,17 +836,26 @@ int main(int argc, char* argv[]) {
 	vector<pthread_t> thread( nbThreads );
 	vector<ParamsThread> paramsThreads( nbThreads ); //= new ParamsThread[nbThreads];
 
-	for (size_t i = 0; i < nbThreads; ++i) {
+	size_t jobSize = ( finalCubeDimentions[1] - 6 ) / ( nbThreads * worldSize);
+	size_t remainder = ( finalCubeDimentions[1] - 6 ) % (nbThreads * worldSize );
+	paramsThreads[0].index = 0;
+	paramsThreads[0].jobSize = 0 < remainder ? jobSize + 1 : jobSize;            //Calculations are made from index 3 to  *finalCubeDimentions[0]*-3
+	paramsThreads[0].jGlobal = 3;
+
+	for (size_t i = 1; i < nbThreads; ++i) {
 		paramsThreads[i].index = i;
-		paramsThreads[i].jobSize = ( finalCubeDimentions[1] - 6 ) / ( nbThreads * worldSize);            //Calculations are made from index 3 to  *finalCubeDimentions[0]*-3
-		paramsThreads[i].jGlobal = i * ( ( finalCubeDimentions[1] - 6 ) / ( nbThreads * worldSize ) );	  //Calculations are made from index 3 to  *finalCubeDimentions[0]*-3
+		paramsThreads[i].jobSize = i < remainder ? jobSize + 1 : jobSize;            //Calculations are made from index 3 to  *finalCubeDimentions[0]*-3
+		paramsThreads[i].jGlobal = paramsThreads[i - 1].jGlobal + paramsThreads[i - 1].jobSize;	  //Calculations are made from index 3 to  *finalCubeDimentions[0]*-3
 	}
 
-	for (size_t i = 0; i < ( finalCubeDimentions[1] - 6 ) % (nbThreads * worldSize ); ++i) {
+
+	for (size_t i = 0; i < remainder; ++i) {
 		++paramsThreads[i].jobSize;
+		if( i < ( paramsThreads.size() - 1 ) )
+			++paramsThreads[i + 1].jGlobal;
 	}
 
-	paramsThreads[0].jGlobal = 3; //We are starting calculations from index 3
+	//paramsThreads[0].jGlobal = 3; //We are starting calculations from index 3
 
 	//paramsThreads[nbThreads - 1].index = nbThreads - 1;
 	//paramsThreads[nbThreads - 1].jobSize = finalCubeDimentions[0] / nbThreads + finalCubeDimentions[0] % nbThreads;
@@ -980,7 +870,7 @@ int main(int argc, char* argv[]) {
 	for (size_t i = 0; i < nbThreads; ++i) {
 		pthread_join( thread[i], NULL );
 	}
-
+/*
 	if ( rank == 0 ) {
 		//receive
 		int error;
@@ -1007,7 +897,7 @@ int main(int argc, char* argv[]) {
 		printMpiError( error );
 
 	}
-
+*/
 	MPI_Finalize();
 
 //	omp_set_num_threads( 2 );
@@ -1057,8 +947,8 @@ void* runThreads(void* param) {
 	cout << "Thread #" << paramTh->index << " started working." << endl;
 
 
-	size_t fcDim01 = finalCubeDimentions[0] * finalCubeDimentions[1]; //
-	size_t resDim01 = ( finalCubeDimentions[0] - 6 ) * ( finalCubeDimentions[1] - 6 );
+	size_t fcDim01 = finalCubeDimentions[0] * finalCubeDimentions[1];
+	size_t resDim01 = ( finalCubeDimentions[0] ) * ( finalCubeDimentions[1]  );
 
 	valarray<double> x( wl ), y( sliceSize ), sig( sliceSize );
 	valarray<double> a( alast ), b( brlf );
@@ -1075,7 +965,7 @@ void* runThreads(void* param) {
 //	cout << "jobsize= " << paramTh->jobSize << endl;
 //	cout << "glovbal I" << paramTh->iGlobal << endl;
 
-	for(size_t j = 0; /*i < 1 */ ( j < paramTh->jobSize ) && ( j + paramTh->jGlobal < finalCubeDimentions[1] - 3 ); ++j) {
+	for(size_t j = 0; ( j < paramTh->jobSize ) && ( j + paramTh->jGlobal < finalCubeDimentions[1] - 3 ); ++j) {
 
 		size_t realInd = j + paramTh->jGlobal; // j index of the finalcube
 		a_old = alast;
@@ -1090,7 +980,7 @@ void* runThreads(void* param) {
 
 
 			size_t ij = realInd * finalCubeDimentions[0] + i;
-			size_t resIj = realInd * ( finalCubeDimentions[0] - 6 ) + i;
+			size_t resIj = realInd * ( finalCubeDimentions[0] ) + i;
 
 
 		//	size_t ij = realInd * finalCubeDimentions[1] + j;
@@ -1185,6 +1075,10 @@ void* runThreads(void* param) {
 				cout << "Error status: " << result.status << endl;
 		//		continue;
 			}
+			cout << "At i=" << i << ", j=" << realInd << " ";
+			printArray( paramTh->index, a, "a" );
+
+
 
 			double chi1 = ( w * ( y - p.f ) * ( y - p.f ) / sig2 ).sum();
 			//double chi1r = chi1 / ( sliceSize - aSize + 1 );  // y.size() is replaced  with sliceSize as tey'r equal
@@ -1204,6 +1098,8 @@ void* runThreads(void* param) {
 
 				mpfit( tripletbr, sliceSize, bSize, &b[0], 0, 0, (void *) &p, &result );
 
+				cout << "At i=" << i << ", j=" << realInd << " ";
+				printArray( paramTh->index, b, "b" );
 
 				double chi2 = ( w * ( y - p.f ) * ( y - p.f ) / sig2 ).sum();  // p.f is different from p.f used in chi1
 				//double chi2r = chi1 / ( sliceSize - bSize + 1 );
@@ -1221,8 +1117,8 @@ void* runThreads(void* param) {
 */
 
 				if ( chi1 - chi2 >= chi2lim2 ) {
-					//a_old = b[slice( 0, 5, 1 )];
-					//b_old = b;
+			//		a_old = b[slice( 0, 5, 1 )];
+			//		b_old = b;
 
 			//		writeToAscii( realInd, j, b[slice( 0, 5, 1 )], aMyFile );
 			//		writeToAscii( realInd, j, b[slice( 5, 3, 1 )], bMyFile );
@@ -1233,7 +1129,7 @@ void* runThreads(void* param) {
 	//				++bCount;
 				//	exit(0);
 				} else {
-					//a_old = a;
+			//		a_old = a;
 			//		writeToAscii( realInd, j, a, aMyFile );
 					aResult[slice( resIj, aSize, resDim01 )] = a;
 					cout << "i= " << i << " j= " << realInd << endl;
@@ -1271,6 +1167,9 @@ void* runThreads(void* param) {
 				//	continue;
 				}
 
+				cout << "At i=" << i << ", j=" << realInd << " ";
+				printArray( paramTh->index, a, "aN" );
+
 				chi1 = ( w * ( y - p.f ) * ( y - p.f ) / sig2 ).sum();
 				cout << "At i=" << i << ", j=" << realInd << " after binding chi1= " << chi1 << endl;
 
@@ -1280,12 +1179,15 @@ void* runThreads(void* param) {
 
 					mpfit( tripletbr, sliceSize, bSize, &b[0], 0, 0, (void *) &p, &result );
 
+					cout << "At i=" << i << ", j=" << realInd << " ";
+					printArray( paramTh->index, b, "bN" );
+
 					double chi2 = ( w * ( y - p.f ) * ( y - p.f ) / sig2 ).sum();  // p.f is different from p.f used in chi1
 					//double chi2r = chi1 / ( sliceSize - bSize + 1 );
 
 					if ( chi1 - chi2 >= chi2lim2 ) {
-					//	a_old = b[slice( 0, 5, 1 )];
-					//	b_old = b;
+			//			a_old = b[slice( 0, 5, 1 )];
+			//			b_old = b;
 		//				writeToAscii( realInd, j, b[slice( 0, 5, 1 )], aMyFile );
 		//				writeToAscii( realInd, j, b[slice( 5, 3, 1 )], bMyFile );
 						aResult[slice( resIj, aSize, resDim01 )] = b[slice( 0, aSize, 1 )]; // first 5 elements of b
@@ -1295,7 +1197,7 @@ void* runThreads(void* param) {
 
 						//						++bCount;
 					} else {
-					//	a_old = a;
+				//		a_old = a;
 				//		writeToAscii( realInd, j, a, aMyFile );
 						aResult[slice( resIj, aSize, resDim01 )] = a;
 						cout << "i= " << i << " j= " << realInd << endl;
@@ -1303,22 +1205,9 @@ void* runThreads(void* param) {
 					}
 
 	//					++aCount;
-				} /* else
-					cout << "Thread #" << paramTh->index << ": No line detected at i= " << realInd << ", j= " << j << endl; */
+				}  else
+					cout << "Thread #" << paramTh->index << ": No line detected at i= " << i << ", j= " << realInd << endl;
 			}
-
-
-	/*
-	//			cout << "mpfit status: " << status << " or " << result.status << endl;
-	//			cout << "mpfit chi: " << result.bestnorm << endl;
-
-			for(size_t i = 0; i < p.f.size(); ++i)
-				cout << "F[" << i << "]= " << p.f[i] << endl;
-
-			for(size_t i = 0; i < alast.size(); ++i)
-				cout << "a[" << i << "]= " << a[i] << endl;
-			exit( 0 );
-	*/
 		} // End of first for
 	}  // End of second for
 
