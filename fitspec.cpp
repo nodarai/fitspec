@@ -23,7 +23,7 @@
 
 #include <CCfits/CCfits>
 
-//#include <boost/math/distributions/fisher_f.hpp>
+#include <boost/math/distributions/fisher_f.hpp>
 
 //#include "fitspec.h"
 #include "functions.h"
