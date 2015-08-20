@@ -14,25 +14,37 @@
 #include <vector>
 #include <iterator>
 #include <set>
-
+#include <unistd.h>
+#include <cstdio>
 #include <limits>
+#include <assert.h>
+
+#include <mpi.h>
 
 #include <CCfits/CCfits>
 
-#include "fitspec.h"
+#include <boost/math/distributions/fisher_f.hpp>
+
+//#include "fitspec.h"
+#include "functions.h"
 #include "mpfit.h"
+#include "cJSON/cJSON.h"
 //#define THIRD_DIMENTION 240
 
 using namespace std;
 using namespace CCfits;
+//using namespace boost::math;
 
 
 
 // Global variables********************
-double piSqr = sqrt( 2.0 * M_PI );
+
 size_t sliceSize,
 	   aSize,
 	   bSize;
+
+double chi2lim,
+	   chi2lim2;
 
 valarray<double> finalCube,
 				 sky,
@@ -52,35 +64,57 @@ vector<unsigned int> finalCubeDimentions,
 
 
 
-struct parameters {
-	valarray<double> x;
-	valarray<double> f;
-	valarray<double> y;
-	valarray<double> yErr;
-};
+
+void* runThreads   (void*);
+void readImage	   (valarray<double>&, vector<unsigned int>&, string);
+int  writeImage	   (string, long, vector<long>, valarray<double>);
+void printArray	   (size_t, valarray<double>, string);
+void printMpiError (int);
+
+
+
+/*
+
+int writeToAscii(size_t i, size_t j, valarray<double> va, ofstream& myFile) {
+
+	myFile << i << " " << j << " ";
+	for(size_t ind = 0; ind < va.size(); ++ind) {
+		myFile << va[ind] << " ";
+	}
+	myFile << "\n";
+
+	return 0;
+}
+*/
 
 
 
 
-void runThreads(void*);
-int  triplet(int, int, double*, double*, double**, void*);
-int  tripletbr(int, int, double*, double*, double**, void*);
-void readImage(valarray<double>&, vector<unsigned int>&, string);
-int  writeImage(string, long, vector<long>, valarray<double>);
 
 
+cJSON* checkParam( cJSON* p, int type ) {
+	for(cJSON* iter = p->child; iter; iter = iter->next) {
+		if( !strcmp( iter->string, "value" ) ) {
+			if( iter->type == type ) {
+				return iter;
+			}
+		}
+	}
+	return 0;
+}
 
 
+/*
+********* Function to read the input file 
+*/
+void readInputFile(string fileName, valarray<double> &alast, valarray<double> &brlf, size_t *start, size_t *sigStart, size_t *sliceSize, int *nbThreads) {
 
-
-
-
-void readInputFile(string fileName, valarray<double> &alast, valarray<double> &brlf, size_t *start, size_t *sigStart, size_t *sliceSize) {
 	ifstream myFile;
 	myFile.open( fileName.c_str() );
 
 	if ( myFile.is_open() ) {
 		size_t alastSize, brlfSize;
+		myFile >> (*nbThreads);
 		myFile >> (*start);
 		myFile >> (*sigStart);
 		myFile >> (*sliceSize);
@@ -102,25 +136,224 @@ void readInputFile(string fileName, valarray<double> &alast, valarray<double> &b
 }
 
 
+vector<double> readArrayJSON(cJSON **iter) {
+
+	cJSON* tmpIter = *iter;
+	vector<double> v;
+
+	while( strcmp( tmpIter->string, "value" ) ) {    //find the "value" parameter
+		tmpIter = tmpIter->next;
+	}
+
+	if( tmpIter->type != cJSON_Array )
+		cout << "Error in the input file. Wrong type of value parameter in pads: " << tmpIter->type << endl;
+
+	for( cJSON* it = tmpIter->child; it; it = it->next ) {
+		v.push_back( it->valuedouble );
+	}
+	return v;
+}
+
+
+int readInputFileJSON(string fileName, string &resultfile, vector<string> &inputFits,
+					  	 size_t *start, size_t *sigStart, size_t *nbThreads) {
+
+	ifstream in( fileName.c_str() );
+
+	if ( !in.is_open() ) {
+		cout << "Unable to open the file: " << fileName << endl;
+		return 1;
+	}
+
+	string contents( ( istreambuf_iterator<char>( in ) ), istreambuf_iterator<char>() );
+	char* inputString = (char*)contents.c_str();
+
+	cJSON* inputParams;
+	inputParams = cJSON_Parse( inputString );
+
+	assert( inputParams );
+
+	cJSON* iter = inputParams->child;
+	size_t i;
+
+	for( i = 0/*cJSON* iter = inputParams->child->next*/; iter; iter = iter->next, ++i ) {
+
+		if( !strcmp( iter->string, "number_of_threads" ) ) {
+			cJSON* tmpIter = checkParam( iter, cJSON_Number );
+			if( !tmpIter ) {
+				printf("Wrong parameter type for %s\n",  iter->string);
+				return 1;
+			}
+			else {
+				(*nbThreads) = tmpIter->valueint;
+			}
+		}
+		else
+		if( !strcmp( iter->string, "start_index" ) ) {
+			cJSON* tmpIter = checkParam( iter, cJSON_Number );
+			if( !tmpIter ) {
+				printf("Wrong parameter type for %s\n",  iter->string);
+				return 1;
+			}
+			else {
+				(*start) = tmpIter->valueint;
+			}
+		}
+		else
+		if( !strcmp( iter->string, "sig_start_index" ) ) {
+			cJSON* tmpIter = checkParam( iter, cJSON_Number );
+			if( !tmpIter ) {
+				printf("Wrong parameter type for %s\n",  iter->string);
+				return 1;
+			}
+			else {
+				(*sigStart) = tmpIter->valueint;
+			}
+		}
+		else
+		if( !strcmp( iter->string, "slice_size" ) ) {
+			cJSON* tmpIter = checkParam( iter, cJSON_Number );
+			if( !tmpIter ) {
+				printf("Wrong parameter type for %s\n",  iter->string);
+				return 1;
+			}
+			else {
+				sliceSize = tmpIter->valueint;
+			}
+		}
+		else
+		if( !strcmp( iter->string, "chi2lim" ) ) {
+			cJSON* tmpIter = checkParam( iter, cJSON_Number );
+			if( !tmpIter ) {
+				printf("Wrong parameter type for %s\n",  iter->string);
+				return 1;
+			}
+			else {
+				chi2lim = tmpIter->valuedouble;
+			}
+		}
+		else
+		if( !strcmp( iter->string, "chi2lim2" ) ) {
+			cJSON* tmpIter = checkParam( iter, cJSON_Number );
+			if( !tmpIter ) {
+				printf("Wrong parameter type for %s\n",  iter->string);
+				return 1;
+			}
+			else {
+				chi2lim2 = tmpIter->valuedouble;
+			}
+		}
+		else
+		if( !strcmp( iter->string, "finalcube" ) ) {
+			cJSON* tmpIter = checkParam( iter, cJSON_String );
+			if( !tmpIter ) {
+				printf("Wrong parameter type for %s\n",  iter->string);
+				return 1;
+			}
+			else {
+				inputFits[0] = tmpIter->valuestring;
+			}
+		}
+		else
+		if( !strcmp( iter->string, "sky" ) ) {
+			cJSON* tmpIter = checkParam( iter, cJSON_String );
+			if( !tmpIter ) {
+				printf("Wrong parameter type for %s\n",  iter->string);
+				return 1;
+			}
+			else {
+				inputFits[1] = tmpIter->valuestring;
+			}
+		}
+		else
+		if( !strcmp( iter->string, "wl" ) ) {
+			cJSON* tmpIter = checkParam( iter, cJSON_String );
+			if( !tmpIter ) {
+				printf("Wrong parameter type for %s\n",  iter->string);
+				return 1;
+			}
+			else {
+				inputFits[2] = tmpIter->valuestring;
+			}
+		}
+		else
+		if( !strcmp( iter->string, "resultfile" ) ) {
+			cJSON* tmpIter = checkParam( iter, cJSON_String );
+			if( !tmpIter ) {
+				printf("Wrong parameter type for %s\n",  iter->string);
+				return 1;
+			}
+			else {
+				resultfile = tmpIter->valuestring;
+			}
+		}
+		else
+		if( !strcmp( iter->string, "a_first_guess" ) ) {
+			cJSON* tmpIter = checkParam( iter, cJSON_Array );
+			if( !tmpIter ) {
+				printf("Wrong parameter type for %s\n",  iter->string);
+				return 1;
+			}
+			else {
+					vector<double> v =  readArrayJSON( &iter->child );
+					valarray<double> vaTmp( v.data()[0], v.size() );
+					alast.resize( vaTmp.size() );
+					alast = vaTmp;
+				}
+		}
+		else
+		if( !strcmp( iter->string, "b_first_guess" ) ) {
+			cJSON* tmpIter = checkParam( iter, cJSON_Array );
+			if( !tmpIter ) {
+				printf("Wrong parameter type for %s\n",  iter->string);
+				return 1;
+			}
+			else {
+					vector<double> v =  readArrayJSON( &iter->child );
+					valarray<double> vaTmp ( v.data()[0], v.size() );
+					brlf.resize( vaTmp.size() );
+					brlf = vaTmp;
+				}
+		}
+	}
+
+	in.close();
+
+	return 0;
+}
+
+
+
+
+/*
+********** Compute average value of the valarray
+*/
 double average(valarray<double> va) {
 	return va.sum() / va.size();
 }
 
-
-double stdev(valarray<double> va)
-{
+/*
+********** Compute standard deviation of the valarray
+*/
+double stdev(valarray<double> va) {
     double E = 0;
     double ave = average( va );
     double inverse = 1.0 / static_cast<double>(va.size());
+
+    E = ( ( va - ave ) * ( va - ave ) ).sum();
+ /*
     for(size_t i = 0; i < va.size(); ++i) {
-        E += pow( static_cast<double>( va[i] ) - ave, 2 );
+        E += pow( va[i] - ave, 2 );
     }
+*/
     return sqrt( inverse * E );
 }
 
 
 
-
+/*
+********* Helper mfunction for quicksort
+*/
 int partition(valarray<double> &A, int lo, int hi) {
   int pivotIndex = ( hi + lo ) / 2;
   double pivotValue = A[pivotIndex];
@@ -140,10 +373,13 @@ int partition(valarray<double> &A, int lo, int hi) {
   return storeIndex;
 }
 
+/*
+********** Sort the part of the valarray from *lo* to *hi* using quicksort algorithm
+*/
 void quickSort(valarray<double> &A, int lo, int hi) {
   if ( lo < hi ) {
     int p = partition( A, lo, hi );
-    if ( ( p == (A.size() / 2) ) && ( (A.size() % 2) == 1 ) ) {
+    if ( ( p == ( A.size() / 2 ) ) && ( ( A.size() % 2 ) == 1 ) ) {
       cout << "returning" << endl;
       return;
     }
@@ -161,6 +397,9 @@ void quickSort(valarray<double> &A, int lo, int hi) {
 //  }
 }
 
+/*
+********* Sort the entire valarray using quicksort algorithm
+*/
 void quickSort(valarray<double> &A) {
   quickSort( A, 0, A.size() - 1 );
 }
@@ -168,11 +407,14 @@ void quickSort(valarray<double> &A) {
 
 
 
-
+/*
+********* Compute the median for valarray.
+********* If number of elements is odd, median is a central element of the sorted values.
+********* If it's even, than median is the average of two central values.
+*/
 double median(valarray<double> va) {
 
 	size_t size = va.size();
-
 	quickSort( va );
 
 	return size % 2 ? va[size / 2] : ( va[size / 2] + va[size / 2 + 1] ) / 2;
@@ -180,32 +422,100 @@ double median(valarray<double> va) {
 }
 
 
-//int triplet(double x, double *par, double *f, double *pder) {
+/*
+ ******** compute the average of 8 neighbors and the element itself in 3 dimensional array
+ *
+void avOfNeighbors (valarray<double> &y,/* valarray<double> va, * size_t i, size_t j, size_t neibSize) {
+
+	double sum = 0.0;
+	unsigned int dim12 = finalCubeDimentions[2] * finalCubeDimentions[1];
+	unsigned int dim2 = finalCubeDimentions[2];
+//	unsigned int jdim2 = finalCubeDimentions[2] * j;
+//	size_t k = 0;
+/*
+	sum += va[i 		* dim12 + dim2 * j 		   + k]
+		 + va[i 		* dim12 + dim2 * ( j - 1 ) + k]
+		 + va[i 		* dim12 + dim2 * ( j + 1 ) + k]
+		 + va[( i - 1 ) * dim12 + dim2 * j 		   + k]
+		 + va[( i - 1 ) * dim12 + dim2 * ( j - 1 ) + k]
+		 + va[( i - 1 ) * dim12 + dim2 * ( j + 1 ) + k]
+		 + va[( i + 1 ) * dim12 + dim2 * j 		   + k]
+		 + va[( i + 1 ) * dim12 + dim2 * ( j - 1 ) + k]
+		 + va[( i + 1 ) * dim12 + dim2 * ( j + 1 ) + k];
+
+	cout << sum / 9.0 << " ";
+	sum = 0.0;
+
+	for(k = 1; k < sliceSize; ++k) {
+		for(size_t l = i - neibSize / 2; l <= i + neibSize / 2; ++l)
+			for(size_t m = j - neibSize / 2; m <= j + neibSize / 2; ++m)
+				sum+= va[l * dim12 + m * dim2 + k];
+		cout << sum / 9.0 << " ";
+		sum = 0.0;
+	}
+	cout << endl;
+*
+	//size_t ar[9];// =
+	vector<size_t> v ( neibSize * neibSize );
+	for(size_t n = 0, l = i - neibSize / 2; l <= i + neibSize / 2; ++l)
+		for(size_t m = j - neibSize / 2; m <= j + neibSize / 2; ++m)
+			v[n++] = l * dim12 + m * dim2;
+
+	for(size_t k = 0; k < sliceSize; ++k, sum = 0.0) {
+		for(size_t l = 0; l < v.size(); ++l)
+			sum += finalCube[v[l] + k];
+		y[k] =  sum / (double) v.size();
+//		cout << y[k] << " ";
+//		sum = 0.0;
+	}
+//	cout << endl;
+/*
+
+	for(size_t l = i - neibSize / 2; l <= i + neibSize / 2; ++l)
+		for(size_t m = j - neibSize / 2; m <= j + neibSize / 2; ++m)
+			sum+= va[l * dim12 + m * dim2 + k];
+
+	y[k] = sum/ 9.0;
 
 
+	for(k = 1; k < sliceSize; ++k) {
+		for(size_t l = i - neibSize / 2, m = j - neibSize / 2 - 1; l < i + neibSize / 2; ++l)
+			sum -= va[l * dim12 + j * dim2 + k];
+		for(size_t l = i - neibSize / 2, m = j + neibSize / 2; l < i + neibSize / 2; ++l)
+			sum -= va[l * dim12 + j * dim2 + k];
+	}
+*
 
-//void tripletbr(double x, double *par, double *f, double *pder) {
+//	return sum / 9.0;
+}
+*/
 
+void avOfNeighbors (valarray<double> &y, bool fc, size_t i, size_t j, size_t neibSize) {
 
-double avOfNeighbors(valarray<double> va, vector<unsigned int> dimentions,  size_t i, size_t j, size_t k) {
+	double* va = static_cast<double*>(  fc ? &finalCube[0] : &sig2d[0] );
 
 	double sum = 0.0;
 
-	sum += va[i * dimentions[2] * dimentions[1] + dimentions[2] * j + k]
-		 + va[i * dimentions[2] * dimentions[1] + dimentions[2] * ( j - 1 ) + k]
-		 + va[i * dimentions[2] * dimentions[1] + dimentions[2] * ( j + 1 ) + k]
-		 + va[( i - 1 ) * dimentions[2] * dimentions[1] + dimentions[2] * j + k]
-		 + va[( i - 1 ) * dimentions[2] * dimentions[1] + dimentions[2] * ( j - 1 ) + k]
-		 + va[( i - 1 ) * dimentions[2] * dimentions[1] + dimentions[2] * ( j + 1 ) + k]
-		 + va[( i + 1 ) * dimentions[2] * dimentions[1] + dimentions[2] * j + k]
-		 + va[( i + 1 ) * dimentions[2] * dimentions[1] + dimentions[2] * ( j - 1 ) + k]
-		 + va[( i + 1 ) * dimentions[2] * dimentions[1] + dimentions[2] * ( j + 1 ) + k];
+	size_t dim0 = finalCubeDimentions[0];
+	size_t dim01 = finalCubeDimentions[0] * finalCubeDimentions[1];
 
-	return sum / 9.0;
+	for(size_t k = 0; k < sliceSize; ++k) {
+		for(size_t l = j - neibSize / 2; l <= j + neibSize / 2; ++l) {
+			size_t ij = l * dim0 + k * dim01;
+			for(size_t m = i - neibSize / 2; m <= i + neibSize / 2; ++m) {
+				size_t ijk = m + ij;
+				sum+= *(va + ijk);
+
+			}
+		}
+		y[k] = sum / 9.0;
+		sum = 0.0;
+	}
 }
 
-
-
+/*
+ ****** Resize one dimensional array, so that *startIndex* will be first element and (*startIndex*+*count*-1) will be last
+ */
 void resizeOneDimentional(valarray<double> &va, size_t startIndex, size_t count){
 	valarray<double> tmp( count );
 	tmp = va[slice( startIndex, count, 1 )];
@@ -213,44 +523,71 @@ void resizeOneDimentional(valarray<double> &va, size_t startIndex, size_t count)
 	va = tmp;
 }
 
+void printArray(size_t index, valarray<double> a, string name) {
+
+
+
+cout << "Thread #" << index << " " << name << " = { ";
+for(size_t i = 0; i < a.size(); ++i)
+	cout << a[i] << ", ";
+cout << "}" << endl;
+}
+
+
 
 int main(int argc, char* argv[]) {
-	clock_t ts = clock();
 
-	cout << numeric_limits<double>::max() << endl;
+
+/*
+
+	// standard normal distribution object:
+	normal norm;
+	// print survival function for x=2.0:
+	cout << cdf(norm, 2.0) << endl;
+
+	return 0;
+*/
+
+
+
+	time_t ts = time( NULL );
+	time( &ts );
+
+	cout.rdbuf()->pubsetbuf( 0, 0 ); //Turn off buffered output
+
+//	cout << numeric_limits<double>::max() << endl;
 //	return 0;
 
 
 	//size_t startIndex = 0, sigStartIndex = 0;
-	string inputFile = "inputfile.txt";
+	string inputFile = "inputfile.json",
+		   resultFile;
+	/*This vector contains filenames of FITS input data
+	  0: finalcube, 1: sky, 2: wl */
+	vector<string> inputFits( 3 );
 
 	if ( argc == 1 ) {
-		cout << "You should provide input file name. \nIf not, the default will be used: inputfile.txt" << '\n';
+		cout << "You should provide input file name. \nIf not, the default will be used: inputfile.json" << '\n';
 	} else if ( argc == 2 ) {
 			inputFile = argv[1];
 		   } else
 			   cout << "Only one parameter should be passed. \nThe rest will be ignored" << '\n';
 
-/*
-	valarray<double> finalCube,
-					 sky,
-					 wl,
-					 var;
-
-	vector<unsigned int> finalCubeDimentions,
-						 skyDimentions,
-						 wlDimentions;
-	valarray<double> alast,
-				   brlf;
-*/
 	size_t startIndex,
-		   sigStartIndex;
-//		   sliceSize;
+		   sigStartIndex,
+		   nbThreads;
 
-	readInputFile( "inputfile.txt", alast, brlf, &startIndex, &sigStartIndex, &sliceSize );
-	readImage( finalCube, finalCubeDimentions, "coadd-HaNII.fits" );
-	readImage( sky, skyDimentions, "sky_HaNII.fits" );
-	readImage( wl, wlDimentions, "wl_HaNII.fits" );
+	//readInputFile( "inputfile.txt", alast, brlf, &startIndex, &sigStartIndex, &sliceSize, &nbThreads );
+	readInputFileJSON( inputFile, resultFile, inputFits, &startIndex, &sigStartIndex, &nbThreads );
+
+	readImage( finalCube, finalCubeDimentions, inputFits[0] );
+	readImage( sky, skyDimentions, inputFits[1] );
+	readImage( wl, wlDimentions, inputFits[2] );
+
+
+	cout << "resultfile= " << resultFile << endl;
+
+	cout << "input fits= " << inputFits[0] << endl;
 
 	//* Remove all elements except the range [startIndex, sliceSize-1]
 
@@ -324,24 +661,70 @@ int main(int argc, char* argv[]) {
 
 
 	cout << "The size of sig2d is " << sig2d.size() << endl;
-//	omp_set_num_threads( 4 );
-//#pragma omp parallel for schedule(static) collapse(3)
+
+/*
+	finalCubeDimentions[0] = finalCubeDimentions[1] = finalCubeDimentions[2] = 5;
+	finalCube.resize( finalCubeDimentions[0] * finalCubeDimentions[1] * finalCubeDimentions[2] );
+
+	for (size_t i = 0; i < finalCube.size(); ++i)
+		finalCube[i] = i + 1;
+*/
+	//sliceSize = 3;
+
+
+
+/*
+	valarray<double> tmpFinalCube( finalCubeDimentions[0] * finalCubeDimentions[1] * sliceSize );
+
+	for (size_t k = startIndex; k < startIndex + sliceSize; ++k)
+		for (size_t j = 0; j < finalCubeDimentions[1]; ++j) {
+			size_t ij =
+			for(size_t i = 0; i < finalCubeDimentions[0]; ++i)
+				tmpFinalCube[k - startIndex] = finalCube[];
+		}
+
+
+
 	size_t first = startIndex,
 		   last = sigStartIndex + sliceSize;
 	if( sigStartIndex < startIndex ) {
 		first = sigStartIndex;
 		last = startIndex + sliceSize;
 	}
+*/
+
+
+
 
 	valarray<double> tmpFinalCube( finalCubeDimentions[0] * finalCubeDimentions[1] * sliceSize );
 
+	size_t fcd01 = finalCubeDimentions[0] * finalCubeDimentions[1];
+
+	cout << "first index of new final cube = " << fcd01 * startIndex << endl;
+	cout << "last index of new final cube = " << fcd01 * startIndex + fcd01 * sliceSize << endl;
+
+
+	tmpFinalCube = finalCube[slice( fcd01 * startIndex, fcd01 * sliceSize, 1 )];
+	sig2d = finalCube[slice( fcd01 * sigStartIndex, fcd01 * sliceSize, 1 )];
+
+	finalCube.resize( tmpFinalCube.size() );
+	finalCubeDimentions[2] = sliceSize;
+	finalCube = tmpFinalCube;
+	tmpFinalCube.resize( 0 );
+
+/*
+	cout << endl;
+
 	for(size_t i = 0, l = 0, m = 0; i < finalCubeDimentions[0]; ++i)
 		for(size_t j = 0; j < finalCubeDimentions[1]; ++j) {
-			size_t  ij = j * finalCubeDimentions[0] + i;
+
+			size_t  ij = i * finalCubeDimentions[1] + j;
 
 			for(size_t k = first; k < last; ++k) {
 
-				size_t ijk = k * finalCubeDimentions[0] * finalCubeDimentions[1] + ij;
+				size_t ijk = k * finalCubeDimentions[1] * finalCubeDimentions[2] + ij;
+
+				cout << ijk << " ";
 
 				if ( k >= sigStartIndex && k < ( sigStartIndex + sliceSize ) ) {
 					sig2d[l++] = finalCube[ijk];// / 10000;
@@ -357,15 +740,29 @@ int main(int argc, char* argv[]) {
 //			cout << "l= " << l << " m= " << m << endl;
 		}
 
+	cout << endl;
 
-	finalCube.resize( tmpFinalCube.size() );
-	finalCubeDimentions[2] = sliceSize;
-	finalCube = tmpFinalCube;
-	tmpFinalCube.resize( 0 );
+	*/
+
+/*
+	vector<long> aResDims2( 3 );
+	aResDims2[0] = finalCubeDimentions[0];
+	aResDims2[1] = finalCubeDimentions[1];
+	aResDims2[2] = finalCubeDimentions[2];
+
+
+
+	writeImage( "FCreadcut" + resultFile, 3, aResDims2, finalCube );
+
+	return 0;
+*/
+
+
+	/*
 	cout << "The size of sig2d is " << sig2d.size() << endl;
 	cout << "The size of tmpFinalCube is " << tmpFinalCube.size() << endl;
 	cout << "The size of finalCube is " << finalCube.size() << endl;
-
+*/
 
 
 /*
@@ -383,17 +780,131 @@ int main(int argc, char* argv[]) {
 
 	aSize = alast.size();
 	bSize = brlf.size();
-	size_t aCount = 0,
-		   bCount = 0;
+//	size_t aCount = 0,
+//		   bCount = 0;
 
 
+	vector<long> aResDims( 3 );
+	aResDims[0] = finalCubeDimentions[0];// - 6;
+	aResDims[1] = finalCubeDimentions[1];// - 6;
+	aResDims[2] = aSize;
+
+	vector<long> bResDims( 3 );
+	bResDims[0] = finalCubeDimentions[0];// - 6;
+	bResDims[1] = finalCubeDimentions[1];// - 6;
+	bResDims[2] = bSize - aSize;
+
+	aResult.resize( aResDims[0] * aResDims[1] * aResDims[2] );
+	bResult.resize( bResDims[0] * bResDims[1] * bResDims[2] );
+	//aResult.resize( finalCube.size() );
+	//bResult.resize( finalCube.size() );
+
+
+
+
+
+/*
+	vector<long> aResDims2( 3 );
+	aResDims2[0] = finalCubeDimentions[0];
+	aResDims2[1] = finalCubeDimentions[1];
+	aResDims2[2] = finalCubeDimentions[2];
+
+
+
+	writeImage( "FCread" + resultFile, 3, aResDims2, finalCube );
+
+	return 0;
+*/
+
+
+
+	int rank,
+	    worldSize,
+		provided;
+
+	MPI_Init_thread ( &argc, &argv, MPI_THREAD_MULTIPLE, &provided );      /* starts MPI */
+	if ( provided != MPI_THREAD_MULTIPLE )
+	{
+		printf( "Sorry, this MPI implementation does not support multiple threads\n" );
+		MPI_Abort( MPI_COMM_WORLD, 1 );
+		return 1;
+	}
+
+	MPI_Comm_rank ( MPI_COMM_WORLD, &rank );        /* get current process id */
+	MPI_Comm_size ( MPI_COMM_WORLD, &worldSize );        /* get number of processes */
+
+	vector<pthread_t> thread( nbThreads );
+	vector<ParamsThread> paramsThreads( nbThreads ); //= new ParamsThread[nbThreads];
+
+	size_t jobSize = ( finalCubeDimentions[1] - 6 ) / ( nbThreads * worldSize);
+	size_t remainder = ( finalCubeDimentions[1] - 6 ) % (nbThreads * worldSize );
+	paramsThreads[0].index = 0;
+	paramsThreads[0].jobSize = 0 < remainder ? jobSize + 1 : jobSize;            //Calculations are made from index 3 to  *finalCubeDimentions[0]*-3
+	paramsThreads[0].jGlobal = 3;
+
+	for (size_t i = 1; i < nbThreads; ++i) {
+		paramsThreads[i].index = i;
+		paramsThreads[i].jobSize = i < remainder ? jobSize + 1 : jobSize;            //Calculations are made from index 3 to  *finalCubeDimentions[0]*-3
+		paramsThreads[i].jGlobal = paramsThreads[i - 1].jGlobal + paramsThreads[i - 1].jobSize;	  //Calculations are made from index 3 to  *finalCubeDimentions[0]*-3
+	}
+
+
+	for (size_t i = 0; i < remainder; ++i) {
+		++paramsThreads[i].jobSize;
+		if( i < ( paramsThreads.size() - 1 ) )
+			++paramsThreads[i + 1].jGlobal;
+	}
+
+	//paramsThreads[0].jGlobal = 3; //We are starting calculations from index 3
+
+	//paramsThreads[nbThreads - 1].index = nbThreads - 1;
+	//paramsThreads[nbThreads - 1].jobSize = finalCubeDimentions[0] / nbThreads + finalCubeDimentions[0] % nbThreads;
+	//paramsThreads[nbThreads - 1].iGlobal = ( nbThreads - 1 ) * ( finalCubeDimentions[0] / nbThreads );
+
+
+
+	for (size_t i = 0; i < nbThreads; ++i) {
+		pthread_create( &thread[i], NULL, runThreads, (void*)&paramsThreads[i] );
+	}
+
+	for (size_t i = 0; i < nbThreads; ++i) {
+		pthread_join( thread[i], NULL );
+	}
+/*
+	if ( rank == 0 ) {
+		//receive
+		int error;
+		valarray<double> aOthers( aResult.size() );
+		valarray<double> bOthers( bResult.size() );
+
+		for(size_t i = 1; i < worldSize; ++i) {
+			error = MPI_Recv( &aOthers[0], aResult.size(), MPI_DOUBLE, i, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE );
+			printMpiError( error );
+			aResult += aOthers;
+
+			error = MPI_Recv( &bOthers[0], bResult.size(), MPI_DOUBLE, i, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE );
+			printMpiError( error );
+			bResult += bOthers;
+		}
+
+	} else {
+		//send
+		int error;
+		error = MPI_Send( &aResult, aResult.size(), MPI_DOUBLE, 0, 0, MPI_COMM_WORLD );
+		printMpiError( error );
+
+		error = MPI_Send( &bResult, bResult.size(), MPI_DOUBLE, 0, 1, MPI_COMM_WORLD );
+		printMpiError( error );
+
+	}
+*/
+	MPI_Finalize();
 
 //	omp_set_num_threads( 2 );
 //#pragma omp parallel
 //	{
 
-	aResult.resize( finalCubeDimentions[0] * finalCubeDimentions[1] * aSize );
-	bResult.resize( finalCubeDimentions[0] * finalCubeDimentions[1] * 3 );
+
 
 
 //	omp_set_num_threads( 2 );
@@ -403,42 +914,108 @@ int main(int argc, char* argv[]) {
 
 
 //	} End of parallel section
-
+/*
 	vector<long> aCubeDimentions( 3 );
 	aCubeDimentions[0] = finalCubeDimentions[0] - 6;
 	aCubeDimentions[1] = finalCubeDimentions[1] - 6;
 	aCubeDimentions[2] = aSize;
+*/
 
-	//writeImage( "acube.fits", 3, aCubeDimentions, acube );
 
 
-	cout << "Execution time is " << (double)(clock() - ts)/CLOCKS_PER_SEC << endl;
+
+	writeImage( "a" + resultFile, 3, aResDims, aResult );
+	writeImage( "b" + resultFile, 3, bResDims, bResult );
+
+
+	//Here ends the process-parallel routines
+
+
+	cout << "Execution time is " <<  time( NULL ) - ts << " seconds." << endl;
 	return 0;
 }
 
-void runThreads(void* param) {
+
+/*
+ ******* Function to be executed at threads' launch
+ */
+void* runThreads(void* param) {
 
 
-	for(size_t j = 178; j < 188/*finalCubeDimentions[1] - 3*/; ++j)
-		for(size_t i = 206; i < 217/*finalCubeDimentions[0] - 3*/; ++i) {
+	ParamsThread *paramTh = (ParamsThread *) param;
 
-//			cout << "Thread# " << omp_get_thread_num() << " entered in for" << endl;
+	cout << "Thread #" << paramTh->index << " started working." << endl;
 
-//			cout << "nesed is active? " << omp_get_nested() << " nested level= " << omp_get_active_level() << endl;
+
+	size_t fcDim01 = finalCubeDimentions[0] * finalCubeDimentions[1];
+	size_t resDim01 = ( finalCubeDimentions[0] ) * ( finalCubeDimentions[1]  );
+
+	valarray<double> x( wl ), y( sliceSize ), sig( sliceSize );
+	valarray<double> a( alast ), b( brlf );
+	valarray<double> a_old( alast ), b_old( brlf );
+	valarray<double> w( sliceSize );
+	w = var / median( var );
+
+/*
+	ofstream aMyFile, bMyFile;
+	aMyFile.open( "aASCIIRes.txt" );
+	bMyFile.open( "bASCIIRes.txt" );
+*/
+
+//	cout << "jobsize= " << paramTh->jobSize << endl;
+//	cout << "glovbal I" << paramTh->iGlobal << endl;
+
+	for(size_t j = 0; ( j < paramTh->jobSize ) && ( j + paramTh->jGlobal < finalCubeDimentions[1] - 3 ); ++j) {
+
+		size_t realInd = j + paramTh->jGlobal; // j index of the finalcube
+		a_old = alast;
+		b_old = brlf;
+
+
+		//cout << "Global J= " << paramTh->jGlobal << endl;
+
+
+		for(size_t i = 3; i < finalCubeDimentions[0] - 3; ++i) {
+
+
+
+			size_t ij = realInd * finalCubeDimentions[0] + i;
+			size_t resIj = realInd * ( finalCubeDimentions[0] ) + i;
+
+
+		//	size_t ij = realInd * finalCubeDimentions[1] + j;
+		//	size_t resIj = realInd * ( finalCubeDimentions[1] - 6 ) + j;
+
+		//	size_t  ij = j * finalCubeDimentions[0] + realInd;
+		//	size_t resIj = j * ( finalCubeDimentions[0] - 6 ) + realInd;
+
+	//			cout << "Thread# " << omp_get_thread_num() << " entered in for" << endl;
+
+	//			cout << "nesed is active? " << omp_get_nested() << " nested level= " << omp_get_active_level() << endl;
 
 			//valarray<double> a( alast.data(), alast.size() ), b( brlf.data(), brlf.size() );
 			//double *a = alast.data(), *b = brlf.data();
-			valarray<double> a( alast ), b( brlf );
+
 
 			//doule a[5] = { 0.0543693, 10.1, 2.0, 0.0 10.1 }:
 		//	size_t i = 35;
 		//	j = 45;
-			valarray<double> x( wl ), y( sliceSize ), sig( sliceSize );
-			size_t  ij =  i * finalCubeDimentions[2] * finalCubeDimentions[1] + finalCubeDimentions[2] * j;
+
+
+			//old version of indexing
+			//	size_t  ij =  i * finalCubeDimentions[2] * finalCubeDimentions[1] + finalCubeDimentions[2] * j;
+
+
+
+			/*
+			size_t ijk = k * finalCubeDimentions[0] * finalCubeDimentions[1] + ij;
+			*/
 
 			for(size_t k = 0; k < sliceSize; ++k) {
 
-				size_t ijk = k + ij;
+				//old version of indexing
+				//size_t ijk = k + ij;
+				size_t ijk = k * fcDim01 + ij;
 
 				//cout << "finalCube[" << i << "][" << j << "][" << k << "]= " << finalCube[ijk] << endl;
 				//cout << "finalCube[" << k << "]= " << finalCube[k] << endl;
@@ -450,25 +1027,25 @@ void runThreads(void* param) {
 			double sig2 = stdev( sig );
 			sig2 *= sig2;
 
-			valarray<double> w( sliceSize );
-			w = var / median( var );
-
 			double av = average( y );
 
-/*			valarray<double> justFor( sliceSize );
+	/*			valarray<double> justFor( sliceSize );
 			justFor = y - av;
 			for(size_t ii = 0; ii < y.size(); ++ii)
 				cout << "y[" << ii << "]= " << y[ii] << endl;
-*/
+	*/
 			double chi0 = ( ( w * ( y - av ) * ( y - av ) ) / sig2 ).sum();
+			//printArray(y.size(), y, "y");
+			cout << "At i=" << i << ", j=" << realInd << " chi0= " << chi0 << endl;
+
 			//double chi0r = chi0 / y.size();
-//			cout << "y average= " << average( y ) << endl;
-//			cout << "av= " << av << endl;
-/*
+	//			cout << "y average= " << average( y ) << endl;
+	//			cout << "av= " << av << endl;
+	/*
 			for(size_t ind = 0; ind < w.size(); ++ind)
 				cout << "w[" << ind << "]= " << w[ind] << endl;
-*/
-			struct parameters p;
+	*/
+			struct Parameters p;
 			p.x.resize( sliceSize );
 			p.y.resize( sliceSize );
 			p.yErr.resize( sliceSize );
@@ -481,150 +1058,167 @@ void runThreads(void* param) {
 			memset( &result, 0, sizeof( result ) );
 
 
-//			for(size_t i = 0; i < aSize; ++i)
-//				cout << " before a[" << i << "]= " << a[i] << endl;
+	//			for(size_t i = 0; i < aSize; ++i)
+	//				cout << " before a[" << i << "]= " << a[i] << endl;
 
-			mpfit( tripletbr, sliceSize, aSize, &a[0], 0, 0, (void *) &p, &result );
+
+
+	//		printArray( 6, a, "old_a" )
+
+			a = a_old;
+			b = b_old;
+
+			mpfit( triplet, sliceSize, aSize, &a[0], 0, 0, (void *) &p, &result );
 
 			if( result.status < 0 ) {
-				cout << "Error while fitting on index i= " << i << " j= " << j << " !" << endl;
+				cout << "Error while fitting on index i= " << realInd << " j= " << j << " !" << endl;
 				cout << "Error status: " << result.status << endl;
 		//		continue;
 			}
+			cout << "At i=" << i << ", j=" << realInd << " ";
+			printArray( paramTh->index, a, "a" );
+
+
 
 			double chi1 = ( w * ( y - p.f ) * ( y - p.f ) / sig2 ).sum();
 			//double chi1r = chi1 / ( sliceSize - aSize + 1 );  // y.size() is replaced  with sliceSize as tey'r equal
 
-//			double chi2lim = 49.0;
+			cout << "At i=" << i << ", j=" << realInd << " chi1= " << chi1 << endl;
+/*			if ( ( realInd == 166 && j == 69 ) ||
+				 ( realInd == 168 && j == 61 ) ||
+				 ( realInd == 158 && j == 214 ) ||
+				 ( realInd == 143 && j == 221 ) ||
+				 ( realInd == 110 && j == 235 )
+				 ) {
+				cout << "At i=" << realInd << ", j=" << " chi1= " << chi1 << endl;
+			}
+*/
 
-			if( chi0 - chi1 > 49.0 ) {
+			if( chi0 - chi1 > chi2lim ) {
 
-				mpfit( triplet, sliceSize, bSize, &b[0], 0, 0, (void *) &p, &result );
+				mpfit( tripletbr, sliceSize, bSize, &b[0], 0, 0, (void *) &p, &result );
+
+				cout << "At i=" << i << ", j=" << realInd << " ";
+				printArray( paramTh->index, b, "b" );
 
 				double chi2 = ( w * ( y - p.f ) * ( y - p.f ) / sig2 ).sum();  // p.f is different from p.f used in chi1
 				//double chi2r = chi1 / ( sliceSize - bSize + 1 );
 
-				if ( chi1 - chi2 >= 64 ) {
-					aResult[slice( aSize * aCount, aSize, 1 )] = b[slice( 0, 5, 1 )]; // first 5 elements of b
-					bResult[slice( 3 * bCount, bSize, 1 )] = b[slice( 5, 3, 1 )]; // last 3 elements of b
-					++bCount;
-				} else
-					aResult[slice( aSize * aCount, aSize, 1 )] = a;
+//				cout << "At i=" << i << ", j=" << realInd << " chi2= " << chi2 << endl;
+/*
+				if ( ( realInd == 166 && j == 69 ) ||
+					 ( realInd == 168 && j == 61 ) ||
+					 ( realInd == 158 && j == 214 ) ||
+					 ( realInd == 143 && j == 221 ) ||
+					 ( realInd == 110 && j == 235 )
+					 ) {
+					cout << "At i=" << realInd << ", j=" << " chi2= " << chi2 << endl;
+				}
+*/
 
-				++aCount;
+				if ( chi1 - chi2 >= chi2lim2 ) {
+			//		a_old = b[slice( 0, 5, 1 )];
+			//		b_old = b;
+
+			//		writeToAscii( realInd, j, b[slice( 0, 5, 1 )], aMyFile );
+			//		writeToAscii( realInd, j, b[slice( 5, 3, 1 )], bMyFile );
+					aResult[slice( resIj, aSize, resDim01 )] = b[slice( 0, aSize, 1 )]; // first 5 elements of b
+					bResult[slice( resIj, bSize - aSize, resDim01 )] = b[slice( aSize, bSize - aSize, 1 )]; // last 3 elements of b
+					cout << "i= " << i << " j= " << realInd << endl;
+					printArray( paramTh->index, b, "b" );
+	//				++bCount;
+				//	exit(0);
+				} else {
+			//		a_old = a;
+			//		writeToAscii( realInd, j, a, aMyFile );
+					aResult[slice( resIj, aSize, resDim01 )] = a;
+					cout << "i= " << i << " j= " << realInd << endl;
+			//		cout << "i= " << paramTh->iGlobal + i << " j= " << j << endl;
+					printArray( paramTh->index, a, "a" );
+				}
+
+	//				++aCount;
 			} else {
 
-				for(size_t k = 0; k < sliceSize; ++k) {
-					y[k] = avOfNeighbors( finalCube, finalCubeDimentions, i, j, k );        // finalCube[ijk];
-					sig[k] = avOfNeighbors( sig2d, finalCubeDimentions, i, j, k );              //sig2d[ijk];
-				}
+	//				clock_t neighb = clock();
+	//			cout << "i= " << paramTh->iGlobal + i << " j= " << j << endl;
+				avOfNeighbors( y, true,/*finalCube,*/ i, realInd, 3 );
+				avOfNeighbors( sig, false,/*sig2d,*/ i, realInd, 3 );
+	//				cout << "Neighbor count time is " << (double)(clock() - neighb)/CLOCKS_PER_SEC << endl;
 
 				sig2 = stdev( sig );
 				sig2 *= sig2;
 				av = average( y );
 				chi0 = ( ( w * ( y - av ) * ( y - av ) ) / sig2 ).sum();
+				//printArray(y.size(), y, "y after");
+
+				cout << "At i=" << i << ", j=" << realInd << " after binfing chi0= " << chi0 << endl;
+
 				//chi0r = chi0 / y.size();
 
 				p.y = y;
 
-				mpfit( tripletbr, sliceSize, aSize, &a[0], 0, 0, (void *) &p, &result );
+
+				mpfit( triplet, sliceSize, aSize, &a[0], 0, 0, (void *) &p, &result );
 
 				if( result.status < 0 ) {
-					cout << "Error while fitting on index i= " << i << " j= " << j << " !" << endl;
+					cout << "Error while fitting on index i= " << i << " j= " << realInd << " !" << endl;
 					cout << "Error status: " << result.status << endl;
 				//	continue;
 				}
 
+				cout << "At i=" << i << ", j=" << realInd << " ";
+				printArray( paramTh->index, a, "aN" );
+
 				chi1 = ( w * ( y - p.f ) * ( y - p.f ) / sig2 ).sum();
+				cout << "At i=" << i << ", j=" << realInd << " after binding chi1= " << chi1 << endl;
+
 				//chi1r = chi1 / ( sliceSize - aSize + 1 );
 
-				if( chi0 - chi1 > 49.0 ) {
+				if( chi0 - chi1 > chi2lim ) {
 
-					mpfit( triplet, sliceSize, bSize, &b[0], 0, 0, (void *) &p, &result );
+					mpfit( tripletbr, sliceSize, bSize, &b[0], 0, 0, (void *) &p, &result );
+
+					cout << "At i=" << i << ", j=" << realInd << " ";
+					printArray( paramTh->index, b, "bN" );
 
 					double chi2 = ( w * ( y - p.f ) * ( y - p.f ) / sig2 ).sum();  // p.f is different from p.f used in chi1
 					//double chi2r = chi1 / ( sliceSize - bSize + 1 );
 
-					if ( chi1 - chi2 >= 64 ) {
-						aResult[slice( aSize * aCount, aSize, 1 )] = b[slice( 0, 5, 1 )]; // first 5 elements of b
-						bResult[slice( 3 * bCount, bSize, 1 )] = b[slice( 5, 3, 1 )]; // last 3 elements of b
-						++bCount;
-					} else
-						aResult[slice( aSize * aCount, aSize, 1 )] = a;
+					if ( chi1 - chi2 >= chi2lim2 ) {
+			//			a_old = b[slice( 0, 5, 1 )];
+			//			b_old = b;
+		//				writeToAscii( realInd, j, b[slice( 0, 5, 1 )], aMyFile );
+		//				writeToAscii( realInd, j, b[slice( 5, 3, 1 )], bMyFile );
+						aResult[slice( resIj, aSize, resDim01 )] = b[slice( 0, aSize, 1 )]; // first 5 elements of b
+						bResult[slice( resIj, bSize - aSize, resDim01 )] = b[slice( aSize, bSize - aSize, 1 )]; // last 3 elements of b
+						cout << "i= " << i << " j= " << realInd << endl;
+						printArray( paramTh->index, b, "b9" );
 
-					++aCount;
-				} else
-					cout << "No line detected at i= " << i << ", j= " << j << endl;
+						//						++bCount;
+					} else {
+				//		a_old = a;
+				//		writeToAscii( realInd, j, a, aMyFile );
+						aResult[slice( resIj, aSize, resDim01 )] = a;
+						cout << "i= " << i << " j= " << realInd << endl;
+						printArray( paramTh->index, a, "a9" );
+					}
+
+	//					++aCount;
+				}  else
+					cout << "Thread #" << paramTh->index << ": No line detected at i= " << i << ", j= " << realInd << endl;
 			}
-
-
-/*
-//			cout << "mpfit status: " << status << " or " << result.status << endl;
-//			cout << "mpfit chi: " << result.bestnorm << endl;
-
-			for(size_t i = 0; i < p.f.size(); ++i)
-				cout << "F[" << i << "]= " << p.f[i] << endl;
-
-			for(size_t i = 0; i < alast.size(); ++i)
-				cout << "a[" << i << "]= " << a[i] << endl;
-			exit( 0 );
-*/
-	} // End of double for
-
-}
+		} // End of first for
+	}  // End of second for
 
 
 
-int triplet(int m, int n, double *p, double *deviates, double **derivs, void *data) {
-	//double *par = ;
-	struct parameters *pr = (struct parameters *) data;
-	valarray<double> x( pr->x ),
-					 y( pr->y ),
-					 yErr( pr->yErr );
-/*
-	for(size_t i = 0; i < yErr.size(); ++i)
-		cout << "yErr[" << i << "]= " << yErr[i] << endl;
-*/
-	double z = p[0],
-		  inten = p[1],
-		  ww = p[2],
-		  contin = p[3],
-		  NIIinten = p[4],
-		  ha = 6562.8 * ( 1 + z ),
-		  NII_r = 6583 * ( 1 + z ),
-		  dNII_b = 6548.1 * ( 1 + z );
+//	aMyFile.close();
+//	bMyFile.close();
 
-	//cout << p[0] << " " << p[1] << " " << p[2] << " " << p[3] << " " << p[4] << endl;
-
-
-	ww = sqrt( 0.6 * 0.6 + ww * ww );//         ; default width to match sky line.
-
-	//cout << "ww= " << ww << endl;
-
-
-
-	valarray<double> Ha = inten / ( ww * piSqr ) * exp( -0.5 * ( x - ha ) * ( x - ha ) / ( ww * ww ) );
-	valarray<double> NII_a =  NIIinten / ( ww * piSqr ) * exp( -0.5 * ( x - NII_r ) * ( x - NII_r ) / ( ww * ww ) );
-	valarray<double> NII_b = NIIinten / ( 3. * ww * piSqr ) * exp( -0.5 * ( x - dNII_b ) * ( x - dNII_b ) / ( ww * ww ) );
-
-	pr->f = NII_b + Ha + NII_a  + contin;
-	pr->f *= 10000;
-
-
-	for( size_t i = 0; i < y.size(); ++i ) {
-		deviates[i] = ( y[i] - pr->f[i] ) / yErr[i];
-	}
-
-	//pr->pder.resize( x.size() * par.size() );
-/*
-	for(size_t i = 0; i < pr->f.size(); ++i)
-		cout << "pr->f[" << i << "]= " << pr->f[i] << endl;
-	for(size_t i = 0; i < pr->pder.size(); ++i)
-		cout << "pr->par[" << i << "]= " << pr->pder[i] << endl;
-*/
 	return 0;
-	//pder = fltarr(n_elements(x),n_elements(par));//   ; no value returned.
 }
+
 
 
 void readImage(valarray<double> &contents, vector<unsigned int> &dimentions, string fileName) {
@@ -639,7 +1233,6 @@ void readImage(valarray<double> &contents, vector<unsigned int> &dimentions, str
 
 		  // valarray<double>  contents;
 
-
 		   // read all user-specifed, coordinate, and checksum keys in the image
 		   image.readAllKeys();
 
@@ -651,7 +1244,7 @@ void readImage(valarray<double> &contents, vector<unsigned int> &dimentions, str
 		   for(int i = 0; i < size; ++i )
 			   dimentions[i] = image.axis( i );
 
-		   cout << "size of the array is: " << contents.size() << '\n';
+	//	   cout << "size of the array is: " << contents.size() << '\n';
 
 		   // this doesn't print the data, just header info.
 	 //      std::cout << image << std::endl;
@@ -687,56 +1280,8 @@ void readImage(valarray<double> &contents, vector<unsigned int> &dimentions, str
 }
 
 
-int tripletbr(int m, int n, double *p, double *deviates, double **derivs, void *data) {
-	//double *par = ;
-	struct parameters *pr = (struct parameters *) data;
-	valarray<double> x( pr->x ),
-					 y( pr->y ),
-					 yErr( pr->yErr );
 
-	double z = p[0],
-		  inten = p[1],
-		  ww = p[2],
-		  contin = p[3],
-		  NIIinten = p[4],
-		  brint = p[5],
-		  brww = p[6],
-		  zbr = p[7],
-		  ha = 6562.8 * ( 1 + z ),
-		  dNII_r = 6583 * ( 1 + z ),
-		  dNII_b = 6548.1 * ( 1 + z ),
-		  dbr = 6562.8 * ( 1 + zbr );
-
-	ww = sqrt( 0.6 * 0.6 + ww * ww ); //        ; default width to match sky line.
-	brww = sqrt( 0.6 * 0.6 + brww * brww );
-
-
-	//;if ww ge 10 then ww = 10
-
-	valarray<double> Ha = inten / ( ww * piSqr ) *  exp( -0.5 * ( x - ha ) * ( x - ha ) / ( ww * ww ) );
-	valarray<double> NII_r = NIIinten / ( ww * piSqr ) * exp( -0.5 * ( x - dNII_r ) * ( x - dNII_r ) / ( ww * ww ) );
-	valarray<double> NII_b = NIIinten / ( 3. * ww * piSqr ) * exp( -0.5 * ( x - dNII_b ) * ( x - dNII_b ) / ( ww * ww ) );
-	valarray<double> br = brint / ( brww * piSqr ) * exp( -0.5 * ( x - dbr ) * ( x - dbr ) / ( brww * brww ) );
-
-	pr->f = Ha + NII_r + NII_b + br + contin;
-	pr->f *= 10000;
-
-	for( size_t i = 0; i < y.size(); ++i ) {
-		deviates[i] = ( y[i] - pr->f[i] ) / yErr[i];
-	}
-	//pder = fltarr( n_elements( x ), n_elements( par ) );
-	return 0;
-}
-
-
-
-int writeImage( string fileName, long naxis, vector<long> naxes, valarray<double> va )
-{
-
-    // Create a FITS primary array containing a 2-D image
-    // declare axis arrays.
- //   long naxis    =   2;
-  //  long naxes[2] = { 300, 200 };
+int writeImage( string fileName, long naxis, vector<long> naxes, valarray<double> va ) {
 
     // declare auto-pointer to FITS at function scope. Ensures no resources
     // leaked if something fails in dynamic allocation.
@@ -746,6 +1291,7 @@ int writeImage( string fileName, long naxis, vector<long> naxes, valarray<double
     {
         // overwrite existing file if the file already exists.
 
+    	fileName = "!" + fileName;
 //        const std::string fileName("!atestfil.fit");
 
         // Create a new FITS object, specifying the data type and axes for the primary
@@ -754,7 +1300,7 @@ int writeImage( string fileName, long naxis, vector<long> naxes, valarray<double
         // this image is unsigned short data, demonstrating the cfitsio extension
         // to the FITS standard.
 
-        pFits.reset( new FITS( fileName , static_cast<int>(DOUBLE_IMG) , naxis , naxes.data() ) );
+        pFits.reset( new FITS( fileName , static_cast<int>(FLOAT_IMG) , naxis, naxes.data() ) );
     }
     catch (FITS::CantCreate*)
     {
@@ -767,68 +1313,10 @@ int writeImage( string fileName, long naxis, vector<long> naxes, valarray<double
     for (long i = 0; i < naxis; ++i)
     	nelements *= naxes[i];
 
-
-    // references for clarity.
-
- //   long& vectorLength = naxes[0];
- //   long& numberOfRows = naxes[1];
- //   long nelements(1);
-
-
-    // Find the total size of the array.
-    // this is a little fancier than necessary ( It's only
-    // calculating naxes[0]*naxes[1]) but it demonstrates  use of the
-    // C++ standard library accumulate algorithm.
-
- //   nelements = std::accumulate(&naxes[0],&naxes[naxis],1,std::multiplies<long>());
-
-    // create a new image extension with a 300x300 array containing float data.
-/*
-    std::vector<long> extAx(2,300);
-    string newName ("NEW-EXTENSION");
-    ExtHDU* imageExt = pFits->addImage(newName,FLOAT_IMG,extAx);
-
-    // create a dummy row with a ramp. Create an array and copy the row to
-    // row-sized slices. [also demonstrates the use of valarray slices].
-    // also demonstrate implicit type conversion when writing to the image:
-    // input array will be of type float.
-
-    std::valarray<int> row(vectorLength);
-    for (long j = 0; j < vectorLength; ++j) row[j] = j;
-    std::valarray<int> array(nelements);
-    for (int i = 0; i < numberOfRows; ++i)
-    {
-        array[std::slice(vectorLength*static_cast<int>(i),vectorLength,1)] = row + i;
-    }
-
-    // create some data for the image extension.
-    long extElements = std::accumulate(extAx.begin(),extAx.end(),1,std::multiplies<long>());
-    std::valarray<float> ranData(extElements);
-    const float PIBY (M_PI/150.);
-    for ( int jj = 0 ; jj < extElements ; ++jj)
-    {
-            float arg = PIBY*jj;
-            ranData[jj] = std::cos(arg);
-    }
-
-    long  fpixel(1);
-
-    // write the image extension data: also demonstrates switching between
-    // HDUs.
-    imageExt->write(fpixel,extElements,ranData);
-
-    //add two keys to the primary header, one long, one complex.
-
-    long exposure(1500);
-    std::complex<float> omega(std::cos(2*M_PI/3.),std::sin(2*M_PI/3));
-    pFits->pHDU().addKey("EXPOSURE", exposure,"Total Exposure Time");
-    pFits->pHDU().addKey("OMEGA",omega," Complex cube root of 1 ");
-
-*/
     // The function PHDU& FITS::pHDU() returns a reference to the object representing
     // the primary HDU; PHDU::write( <args> ) is then used to write the data.
 
-    pFits->pHDU().write( 1, nelements-1, va );
+    pFits->pHDU().write( 1, nelements, va );
 
 
     // PHDU's friend ostream operator. Doesn't print the entire array, just the
@@ -840,10 +1328,25 @@ int writeImage( string fileName, long naxis, vector<long> naxes, valarray<double
     return 0;
 }
 
-
-
-
-
+void printMpiError( int error ) {
+    switch( error ) {
+    case MPI_SUCCESS:
+  	  //cout << "MPI succeed to start procedure\n";
+  	  break;
+    case MPI_ERR_COMM:
+  	  cout << "MPI failed at invalid communicator" << endl; break;
+    case MPI_ERR_COUNT:
+  	  cout << "MPI failed at invalid count" << endl; break;
+    case MPI_ERR_TYPE:
+  	  cout << "MPI failed at invalid data type argument" << endl; break;
+    case MPI_ERR_TAG:
+  	  cout << "MPI failed at invalid tag" << endl; break;
+    case MPI_ERR_RANK:
+  	  cout << "MPI failed at invalid rank" << endl; break;
+    case MPI_ERR_INTERN:
+  	  cout << "MPI failed at invalid MPICH implementation" << endl; break;
+    }
+}
 
 
 

@@ -8,6 +8,7 @@ RM := rm -rf
 
 # All of the sources participating in the build are defined here
 -include sources.mk
+-include cJSON/subdir.mk
 -include subdir.mk
 -include objects.mk
 
@@ -43,7 +44,7 @@ all: fitspec
 fitspec: $(OBJS) $(USER_OBJS)
 	@echo 'Building target: $@'
 	@echo 'Invoking: GCC C++ Linker'
-	g++ -L/usr/local/lib -L"/home/lerma/workspace/fitspec" -o "fitspec" $(OBJS) $(USER_OBJS) $(LIBS)
+	mpicxx.mpich -L/usr/local/lib -L"/home/lerma/workspace/fitspec" -o "fitspec" $(OBJS) $(USER_OBJS) $(LIBS)
 	@echo 'Finished building target: $@'
 	@echo ' '
 

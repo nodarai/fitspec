@@ -59,7 +59,12 @@ j=45
   ;formpfit:  w = sky/median(sky)
   w = var/median(var) ; bodge to get chi^2=1 in noise
 
-  av = (moment(y))[0]
+
+  a2 = a
+
+  av =    curvefit(x, y, w, a2, sigma, chisq=bestnorme1,function_name="func",/noderivative)    ;(moment(y))[0]
+
+
   chi0 = total((w*(y - av)^2)/sig2)
   chi0r = chi0/n_elements(y)
   print, 'Total chi^2 when no emission line = ', chi0
@@ -67,7 +72,7 @@ j=45
 
 ;stop
 
-  fit = curvefit(x,y,w,a,sigma,chisq=chi1,function_name="triplet",/noderivative)
+  fit = curvefit(x,y,w,a,sigma,chisq=bestnorme2,function_name="triplet",/noderivative)
   chi1 = total((w*(y - fit)^2)/sig2)
   chi1r = chi1/(n_elements(y)-(n_elements(a)-1))
   print, 'Total chi^2 when fit inclubed = ', chi1
@@ -80,6 +85,19 @@ j=45
 
   chi2lim = 49.
 
+
+;compute p
+if ( alpha gt p ) then begin
+
+
+  if (chi0-chi1 gt chi2lim) then begin
+    acube[i,j,*] = a
+  endif else   acube[i,j,*] = a2
+
+
+endif else   acube[i,j,*] = a2
+
+;to remocve
   if (chi0-chi1 gt chi2lim) then begin
      ;plot, wl, y
      ;oplot, wl, fit, color=2
