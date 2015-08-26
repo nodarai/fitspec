@@ -16,12 +16,12 @@
 #include <set>
 #include <unistd.h>
 #include <cstdio>
-#include <limits>
+#include <mpi.h>
 #include <assert.h>
 
 #include <CCfits/CCfits>
 
-#include <boost/math/distributions/fisher_f.hpp>
+//#include <boost/math/distributions/fisher_f.hpp>
 
 //#include "fitspec.h"
 #include "functions.h"
@@ -58,6 +58,7 @@ vector<unsigned int> finalCubeDimentions,
 					 skyDimentions,
 					 wlDimentions;
 
+string fittingFunction = "triplet";
 //*************************************
 
 
@@ -67,7 +68,7 @@ void* runThreads   (void*);
 void readImage	   (valarray<double>&, vector<unsigned int>&, string);
 int  writeImage	   (string, long, vector<long>, valarray<double>);
 void printArray	   (size_t, valarray<double>, string);
-
+void myMpfit	   (bool, int, int, double *, mp_par_struct *, mp_config_struct *, void *, mp_result_struct *);
 
 
 /*
@@ -152,7 +153,7 @@ vector<double> readArrayJSON(cJSON **iter) {
 }
 
 
-int readInputFileJSON(string fileName, string &resultfile, vector<string> &inputFits,
+int readInputFileJSON(string fileName, string &resultfile, string fittingFunction, vector<string> &inputFits,
 					  	 size_t *start, size_t *sigStart, size_t *nbThreads) {
 
 	ifstream in( fileName.c_str() );
@@ -249,6 +250,17 @@ int readInputFileJSON(string fileName, string &resultfile, vector<string> &input
 			}
 			else {
 				inputFits[0] = tmpIter->valuestring;
+			}
+		}
+		else
+		if( !strcmp( iter->string, "fitting_function" ) ) {
+			cJSON* tmpIter = checkParam( iter, cJSON_String );
+			if( !tmpIter ) {
+				printf("Wrong parameter type for %s\n",  iter->string);
+				return 1;
+			}
+			else {
+				fittingFunction = tmpIter->valuestring;
 			}
 		}
 		else
@@ -575,7 +587,7 @@ int main(int argc, char* argv[]) {
 		   nbThreads;
 
 	//readInputFile( "inputfile.txt", alast, brlf, &startIndex, &sigStartIndex, &sliceSize, &nbThreads );
-	readInputFileJSON( inputFile, resultFile, inputFits, &startIndex, &sigStartIndex, &nbThreads );
+	readInputFileJSON( inputFile, resultFile, fittingFunction, inputFits, &startIndex, &sigStartIndex, &nbThreads );
 
 	readImage( finalCube, finalCubeDimentions, inputFits[0] );
 	readImage( sky, skyDimentions, inputFits[1] );
@@ -740,6 +752,24 @@ int main(int argc, char* argv[]) {
 	cout << endl;
 
 	*/
+
+/*
+	vector<long> aResDims2( 3 );
+	aResDims2[0] = finalCubeDimentions[0];
+	aResDims2[1] = finalCubeDimentions[1];
+	aResDims2[2] = finalCubeDimentions[2];
+
+
+
+	writeImage( "FCreadcut" + resultFile, 3, aResDims2, finalCube );
+	cout << endl;
+
+
+
+	return 0;
+
+
+
 
 /*
 	vector<long> aResDims2( 3 );
@@ -1005,7 +1035,8 @@ void* runThreads(void* param) {
 			a = a_old;
 			b = b_old;
 
-			mpfit( triplet, sliceSize, aSize, &a[0], 0, 0, (void *) &p, &result );
+			myMpfit( false, sliceSize, aSize, &a[0], 0, 0, (void *) &p, &result );
+			//mpfit( triplet, sliceSize, aSize, &a[0], 0, 0, (void *) &p, &result );
 
 			if( result.status < 0 ) {
 				cout << "Error while fitting on index i= " << realInd << " j= " << j << " !" << endl;
@@ -1033,7 +1064,8 @@ void* runThreads(void* param) {
 
 			if( chi0 - chi1 > chi2lim ) {
 
-				mpfit( tripletbr, sliceSize, bSize, &b[0], 0, 0, (void *) &p, &result );
+				myMpfit( true, sliceSize, bSize, &b[0], 0, 0, (void *) &p, &result );
+				//mpfit( triplet_br, sliceSize, bSize, &b[0], 0, 0, (void *) &p, &result );
 
 				cout << "At i=" << i << ", j=" << realInd << " ";
 				printArray( paramTh->index, b, "b" );
@@ -1096,7 +1128,8 @@ void* runThreads(void* param) {
 				p.y = y;
 
 
-				mpfit( triplet, sliceSize, aSize, &a[0], 0, 0, (void *) &p, &result );
+				myMpfit( false, sliceSize, aSize, &a[0], 0, 0, (void *) &p, &result );
+				//mpfit( triplet, sliceSize, aSize, &a[0], 0, 0, (void *) &p, &result );
 
 				if( result.status < 0 ) {
 					cout << "Error while fitting on index i= " << i << " j= " << realInd << " !" << endl;
@@ -1114,7 +1147,8 @@ void* runThreads(void* param) {
 
 				if( chi0 - chi1 > chi2lim ) {
 
-					mpfit( tripletbr, sliceSize, bSize, &b[0], 0, 0, (void *) &p, &result );
+					myMpfit( true, sliceSize, bSize, &b[0], 0, 0, (void *) &p, &result );
+					//mpfit( triplet_br, sliceSize, bSize, &b[0], 0, 0, (void *) &p, &result );
 
 					cout << "At i=" << i << ", j=" << realInd << " ";
 					printArray( paramTh->index, b, "bN" );
@@ -1266,5 +1300,43 @@ int writeImage( string fileName, long naxis, vector<long> naxes, valarray<double
 }
 
 
+
+/*
+ *  triplet_br, sliceSize, bSize, &b[0], 0, 0, (void *) &p, &result
+ */
+
+void myMpfit(bool br, int sliceSize, int bSize, double *b, mp_par_struct *par, mp_config_struct *conf, void *p, mp_result_struct *result) {
+
+	if ( !strcmp( fittingFunction.c_str(), "triplet" ) ) {
+		if( br )
+			mpfit( triplet_br, sliceSize, bSize, b, par, conf, p, result );
+		else
+			mpfit( triplet, sliceSize, bSize, b, par, conf, p, result );
+	} else
+		if ( !strcmp( fittingFunction.c_str(), "Ha" ) ) {
+			if( br )
+				mpfit( Ha_br, sliceSize, bSize, b, par, conf, p, result );
+			else
+				mpfit( Ha, sliceSize, bSize, b, par, conf, p, result );
+		} else
+			if ( !strcmp( fittingFunction.c_str(), "Hb" ) ) {
+					if( br )
+						mpfit( Hb_br, sliceSize, bSize, b, par, conf, p, result );
+					else
+						mpfit( Hb, sliceSize, bSize, b, par, conf, p, result );
+				} else
+					if ( !strcmp( fittingFunction.c_str(), "OI" ) ) {
+							if( br )
+								mpfit( OI_br, sliceSize, bSize, b, par, conf, p, result );
+							else
+								mpfit( OI, sliceSize, bSize, b, par, conf, p, result );
+						} else
+							if ( !strcmp( fittingFunction.c_str(), "OI" ) ) {
+									if( br )
+										mpfit( SII_br, sliceSize, bSize, b, par, conf, p, result );
+									else
+										mpfit( SII, sliceSize, bSize, b, par, conf, p, result );
+								}
+}
 
 
