@@ -25,7 +25,7 @@ end
 pro Ha_br, x, par, f, pder
 
 z=par[0]
-ww-par[1]
+ww=par[1]
 
 Ha = 6562.8*(1+z)
 NII_b = 6548.1*(1+z)
@@ -63,7 +63,7 @@ end
 pro Hb, x, par, f, pder
 
 z=par[0]
-ww-par[1]
+ww=par[1]; ?
 
 Hb = 4861.32*(1+z)
 OIII_b = 4959.00*(1+z)
@@ -228,7 +228,3 @@ f = cont + SII_b_ln + SII_r_ln + SII_b_ln_br + SII_r_ln_br
 pder = fltarr(n_elements(x),n_elements(par))   ; no value returned.
 
 end
-
-
-
-

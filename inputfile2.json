@@ -1,0 +1,60 @@
+{
+"number_of_threads": { 
+        "doc": "Number of threads to use when running", 
+        "value": 1
+        },
+"start_index": { 
+        "doc": "Start to extracting points from finalcube at this index",
+        "value": 2730 
+        },
+"sig_start_index": {
+        "value": 2950,
+        "doc": "Start to extracting points from sig at this index"
+        },
+"slice_size": {
+        "value": 270,
+        "doc": "Number of points to extract"
+        },
+"a_first_guess": { 
+        "value": [ 0.001825, 500.5,    2.0,      200.3,     0.0 ],
+        "doc": " [ z,        Ha inten, Ha width, NII inten, contin]"
+        },
+"b_first_guess": { 
+        "value": [ 0.001825, 500.5,    2.0,      200.3,     0.0,    100.0,    4.0,      0.001825],
+        "doc": " [ z,        Ha inten, Ha width, NII inten, contin, bl inten, bl width, bl z]"
+        },
+"resultfile": {
+        "value": "cube.fits",
+        "doc": "As we have two result files, prefixes a and b will be added to the resultfile"
+        },
+"finalcube": {
+        "value": "data/coadd-HiRes.fits",
+        "doc": "Contains finalcube data"
+        },
+"sky": {
+        "value": "data/sky-HiRes.fits",
+        "doc": "Contains sky data"
+        },
+"wl": {
+        "value": "data/wl_HiRes.fits",
+        "doc": "Contains wl data"
+        },
+"fitting_function": {
+        "value": "triplet",
+        "doc": "Candidates are: triplet, Ha, Hb, OI, SII"
+        },
+"alpha": {
+        "value": 0.01,
+        "doc": "Probability to accept the fit"
+        },
+"chi2lim": {
+        "value": 49.0,
+        "doc": ""
+        },
+"chi2lim2": {
+        "value": 64.0,
+        "doc": ""
+        }
+}
+
+
