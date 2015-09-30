@@ -9,7 +9,6 @@
 #include <cmath>
 #include <cstring>
 #include <valarray>
-#include <omp.h>
 #include <time.h>
 #include <fstream>
 #include <vector>
@@ -17,27 +16,23 @@
 #include <set>
 #include <unistd.h>
 #include <cstdio>
-#include <mpi.h>
 #include <assert.h>
 #include <map>
 #include <new>
 
 #include <CCfits/CCfits>
-
 #include <boost/math/distributions/fisher_f.hpp>
 
-//#include "fitspec.h"
 #include "functions.h"
 #include "mpfit.h"
 #include "cJSON/cJSON.h"
-//#define THIRD_DIMENTION 240
+
+//#define INFO()
+typedef valarray<double> vad;
 
 using namespace std;
 using namespace CCfits;
-//using namespace boost::math;
 using boost::math::fisher_f;
-
-
 
 
 
@@ -51,11 +46,16 @@ size_t sliceSize,
 	   aSize,
 	   bSize;
 
-int alwaysFg;
+int info,
+	alwaysFg,
+	compare_limits,
+	compare_guess;
 
 double alpha,
 	   chi2lim,
 	   chi2lim2;
+
+string fittingFunction;
 
 valarray<double> finalCube,
 				 sky,
@@ -73,7 +73,6 @@ vector<unsigned int> finalCubeDimentions,
 					 skyDimentions,
 					 wlDimentions;
 
-string fittingFunction;// = "triplet";
 //*************************************
 
 
@@ -85,34 +84,9 @@ int    writeImage	(string, long, vector<long>, valarray<double>);
 void   printArray	(size_t, valarray<double>, string);
 void   printArray	(size_t, vector<double>, string);
 double chiSquared   (valarray<double>, valarray<double>);
-double fTest	    ( size_t, size_t, double, double);
-int oneEqual(valarray<double> a, valarray<double> b);
-
-//void myMpfit	   (bool, int, int, double *, mp_par_struct *, mp_config_struct *, void *, mp_result_struct *);
-valarray<double> vecToValar( vector<double> );
-
-
-
-
-
-
-/*
-
-int writeToAscii(size_t i, size_t j, valarray<double> va, ofstream& myFile) {
-
-	myFile << i << " " << j << " ";
-	for(size_t ind = 0; ind < va.size(); ++ind) {
-		myFile << va[ind] << " ";
-	}
-	myFile << "\n";
-
-	return 0;
-}
-*/
-
-
-
-
+double fTest	    (size_t, size_t, double, double);
+int 	oneEqual	(valarray<double> a, valarray<double> b);
+vad vecToValar ( vector<double> );
 
 
 
@@ -153,7 +127,6 @@ void readInputFile(string fileName, valarray<double> &alast, valarray<double> &b
 		for(size_t i = 0; i < brlfSize; ++i) {
 			myFile >> brlf[i];
 		}
-//		cout << "sliceSize is: " << (*sliceSize) << endl;
 	}
 	else
 		cout << "Can't open file: " << fileName << endl;
@@ -201,7 +174,7 @@ int readInputFileJSON(string fileName, string &resultfile, vector<string> &input
 	cJSON* iter = inputParams->child;
 	size_t i;
 
-	for( i = 0/*cJSON* iter = inputParams->child->next*/; iter; iter = iter->next, ++i ) {
+	for( i = 0; iter; iter = iter->next, ++i ) {
 
 		if( !strcmp( iter->string, "number_of_threads" ) ) {
 			cJSON* tmpIter = checkParam( iter, cJSON_Number );
@@ -244,7 +217,6 @@ int readInputFileJSON(string fileName, string &resultfile, vector<string> &input
 			}
 			else {
 					vector<double> v =  readArrayJSON( &iter->child );
-					printArray(v.size(), v, "vA");
 					valarray<double> vaTmp;
 					vaTmp.resize(v.size());
 					vaTmp = vecToValar(v);
@@ -283,6 +255,28 @@ int readInputFileJSON(string fileName, string &resultfile, vector<string> &input
 			}
 			else {
 				alwaysFg = tmpIter->valueint;
+			}
+		}
+		else
+		if( !strcmp( iter->string, "compare_guess" ) ) {
+			cJSON* tmpIter = checkParam( iter, cJSON_Number );
+			if( !tmpIter ) {
+				printf("Wrong parameter type for %s\n",  iter->string);
+				return 1;
+			}
+			else {
+				compare_guess = tmpIter->valueint;
+			}
+		}
+		else
+		if( !strcmp( iter->string, "compare_limits" ) ) {
+			cJSON* tmpIter = checkParam( iter, cJSON_Number );
+			if( !tmpIter ) {
+				printf("Wrong parameter type for %s\n",  iter->string);
+				return 1;
+			}
+			else {
+				compare_limits = tmpIter->valueint;
 			}
 		}
 		else
@@ -327,8 +321,7 @@ int readInputFileJSON(string fileName, string &resultfile, vector<string> &input
 			}
 			else {
 				fittingFunction = tmpIter->valuestring;
-				cout << "fitting function is " << fittingFunction << endl
-						<< "fit from JSON is " << tmpIter->valuestring << endl;
+				cout << "Fitting function is:    " << fittingFunction << endl;
 			}
 		}
 		else
@@ -373,9 +366,7 @@ int readInputFileJSON(string fileName, string &resultfile, vector<string> &input
 			}
 			else {
 					vector<double> v =  readArrayJSON( &iter->child );
-					printArray(v.size(), v, "vA");
-				//	valarray<double> vaTmp( v.data()[0], v.size() );
-					valarray<double> vaTmp;// ( v.data()[0] );
+					valarray<double> vaTmp;
 					vaTmp.resize(v.size());
 					vaTmp = vecToValar(v);
 					alast.resize( vaTmp.size() );
@@ -391,9 +382,7 @@ int readInputFileJSON(string fileName, string &resultfile, vector<string> &input
 			}
 			else {
 					vector<double> v =  readArrayJSON( &iter->child );
-					printArray(v.size(), v, "vB");
-					//valarray<double> vaTmp ( v.data()[0], v.size() );
-					valarray<double> vaTmp;// ( v.data()[0] );
+					valarray<double> vaTmp;
 					vaTmp.resize(v.size());
 					vaTmp = vecToValar(v);
 					brlf.resize( vaTmp.size() );
@@ -436,11 +425,6 @@ double stdev(valarray<double> va) {
     double inverse = 1.0 / static_cast<double>(va.size());
 
     E = ( ( va - ave ) * ( va - ave ) ).sum();
- /*
-    for(size_t i = 0; i < va.size(); ++i) {
-        E += pow( va[i] - ave, 2 );
-    }
-*/
     return sqrt( inverse * E );
 }
 
@@ -472,24 +456,16 @@ int partition(valarray<double> &A, int lo, int hi) {
 ********** Sort the part of the valarray from *lo* to *hi* using quicksort algorithm
 */
 void quickSort(valarray<double> &A, int lo, int hi) {
+
   if ( lo < hi ) {
-    int p = partition( A, lo, hi );
+    size_t p = partition( A, lo, hi );
     if ( ( p == ( A.size() / 2 ) ) && ( ( A.size() % 2 ) == 1 ) ) {
-      cout << "returning" << endl;
       return;
     }
-//#pragma omp sections
-//    {
-//#pragma omp section
-  //  	{
-    		quickSort( A, lo, p - 1 );
-//    	}
-//#pragma omp section
- //   	{
-    		quickSort( A, p + 1, hi );
- //   	}
+
+	quickSort( A, lo, p - 1 );
+	quickSort( A, p + 1, hi );
     }
-//  }
 }
 
 /*
@@ -498,8 +474,6 @@ void quickSort(valarray<double> &A, int lo, int hi) {
 void quickSort(valarray<double> &A) {
   quickSort( A, 0, A.size() - 1 );
 }
-
-
 
 
 /*
@@ -513,77 +487,12 @@ double median(valarray<double> va) {
 	quickSort( va );
 
 	return size % 2 ? va[size / 2] : ( va[size / 2] + va[size / 2 + 1] ) / 2;
-
 }
 
 
 /*
  ******** compute the average of 8 neighbors and the element itself in 3 dimensional array
- *
-void avOfNeighbors (valarray<double> &y,/* valarray<double> va, * size_t i, size_t j, size_t neibSize) {
-
-	double sum = 0.0;
-	unsigned int dim12 = finalCubeDimentions[2] * finalCubeDimentions[1];
-	unsigned int dim2 = finalCubeDimentions[2];
-//	unsigned int jdim2 = finalCubeDimentions[2] * j;
-//	size_t k = 0;
-/*
-	sum += va[i 		* dim12 + dim2 * j 		   + k]
-		 + va[i 		* dim12 + dim2 * ( j - 1 ) + k]
-		 + va[i 		* dim12 + dim2 * ( j + 1 ) + k]
-		 + va[( i - 1 ) * dim12 + dim2 * j 		   + k]
-		 + va[( i - 1 ) * dim12 + dim2 * ( j - 1 ) + k]
-		 + va[( i - 1 ) * dim12 + dim2 * ( j + 1 ) + k]
-		 + va[( i + 1 ) * dim12 + dim2 * j 		   + k]
-		 + va[( i + 1 ) * dim12 + dim2 * ( j - 1 ) + k]
-		 + va[( i + 1 ) * dim12 + dim2 * ( j + 1 ) + k];
-
-	cout << sum / 9.0 << " ";
-	sum = 0.0;
-
-	for(k = 1; k < sliceSize; ++k) {
-		for(size_t l = i - neibSize / 2; l <= i + neibSize / 2; ++l)
-			for(size_t m = j - neibSize / 2; m <= j + neibSize / 2; ++m)
-				sum+= va[l * dim12 + m * dim2 + k];
-		cout << sum / 9.0 << " ";
-		sum = 0.0;
-	}
-	cout << endl;
-*
-	//size_t ar[9];// =
-	vector<size_t> v ( neibSize * neibSize );
-	for(size_t n = 0, l = i - neibSize / 2; l <= i + neibSize / 2; ++l)
-		for(size_t m = j - neibSize / 2; m <= j + neibSize / 2; ++m)
-			v[n++] = l * dim12 + m * dim2;
-
-	for(size_t k = 0; k < sliceSize; ++k, sum = 0.0) {
-		for(size_t l = 0; l < v.size(); ++l)
-			sum += finalCube[v[l] + k];
-		y[k] =  sum / (double) v.size();
-//		cout << y[k] << " ";
-//		sum = 0.0;
-	}
-//	cout << endl;
-/*
-
-	for(size_t l = i - neibSize / 2; l <= i + neibSize / 2; ++l)
-		for(size_t m = j - neibSize / 2; m <= j + neibSize / 2; ++m)
-			sum+= va[l * dim12 + m * dim2 + k];
-
-	y[k] = sum/ 9.0;
-
-
-	for(k = 1; k < sliceSize; ++k) {
-		for(size_t l = i - neibSize / 2, m = j - neibSize / 2 - 1; l < i + neibSize / 2; ++l)
-			sum -= va[l * dim12 + j * dim2 + k];
-		for(size_t l = i - neibSize / 2, m = j + neibSize / 2; l < i + neibSize / 2; ++l)
-			sum -= va[l * dim12 + j * dim2 + k];
-	}
-*
-
-//	return sum / 9.0;
-}
-*/
+ */
 
 void avOfNeighbors (valarray<double> &y, bool fc, size_t i, size_t j, size_t neibSize) {
 
@@ -612,58 +521,40 @@ void avOfNeighbors (valarray<double> &y, bool fc, size_t i, size_t j, size_t nei
  ****** Resize one dimensional array, so that *startIndex* will be first element and (*startIndex*+*count*-1) will be last
  */
 void resizeOneDimentional(valarray<double> &va, size_t startIndex, size_t count){
+
 	valarray<double> tmp( count );
 	tmp = va[slice( startIndex, count, 1 )];
 	va.resize( count );
 	va = tmp;
+
 }
 
 void printArray(size_t index, valarray<double> a, string name) {
 
-
-
-cout << "Thread #" << index << " " << name << " = { ";
-for(size_t i = 0; i < a.size(); ++i)
-	cout << a[i] << ", ";
-cout << "}" << endl;
+	cout << "Thread #" << index << " " << name << " = { ";
+	for(size_t i = 0; i < a.size(); ++i)
+		cout << a[i] << ", ";
+	cout << "}" << endl;
 }
 
 
 
 void printArray(size_t index, vector<double> a, string name) {
 
-
-
-cout << "Thread #" << index << " " << name << " = { ";
-for(size_t i = 0; i < a.size(); ++i)
-	cout << a[i] << ", ";
-cout << "}" << endl;
+	cout << "Thread #" << index << " " << name << " = { ";
+	for(size_t i = 0; i < a.size(); ++i)
+		cout << a[i] << ", ";
+	cout << "}" << endl;
 }
 
 
 
 int main(int argc, char* argv[]) {
 
-
-/*
-
-	// standard normal distribution object:
-	normal norm;
-	// print survival function for x=2.0:
-	cout << cdf(norm, 2.0) << endl;
-
-	return 0;
-*/
-
-
-
 	time_t ts = time( NULL );
 	time( &ts );
 
 	cout.rdbuf()->pubsetbuf( 0, 0 ); //Turn off buffered output
-
-//	cout << numeric_limits<double>::max() << endl;
-//	return 0;
 
 
 
@@ -683,78 +574,58 @@ int main(int argc, char* argv[]) {
 	fittingFunctions["Cont"] 		 = Cont;
 
 
-	//size_t startIndex = 0, sigStartIndex = 0;
 	string inputFile = "inputfile.json",
 		   resultFile;
 	/*This vector contains filenames of FITS input data
 	  0: finalcube, 1: sky, 2: wl */
 	vector<string> inputFits( 3 );
+	info = 0;
 
-	if ( argc == 1 ) {
-		cout << "You should provide input file name. \nIf not, the default will be used: inputfile.json" << '\n';
-	} else if ( argc == 2 ) {
+	switch( argc ) {
+	case 1:
+		cout << "You should provide input file name. \nIf not, the default will be used: inputfile.json" << endl;
+		break;
+	case 2:
+		if( !strcmp( argv[1], "-info" ) ) {
+			cout << "You should provide input file name. \nIf not, the default will be used: inputfile.json" << endl;
+			info = 1;
+		} else
 			inputFile = argv[1];
-		   } else
-			   cout << "Only one parameter should be passed. \nThe rest will be ignored" << '\n';
+		break;
+	case 3:
+		if( !strcmp( argv[1], "-info" ) ) {
+			inputFile = argv[2];
+			info = 1;
+		} else
+			if( !strcmp( argv[2], "-info" ) ) {
+				inputFile = argv[1];
+				info = 1;
+			}
+		break;
+	default:
+		 cout << "At most two parameters should be passed. \n1)Input file name \n2) -info if you want informative output " << endl;
+	}
+
 
 	size_t startIndex,
 		   sigStartIndex,
 		   nbThreads;
 
-	//readInputFile( "inputfile.txt", alast, brlf, &startIndex, &sigStartIndex, &sliceSize, &nbThreads );
 	readInputFileJSON( inputFile, resultFile, inputFits, &startIndex, &sigStartIndex, &nbThreads );
 
-	try
-	  {
-		readImage( finalCube, finalCubeDimentions, inputFits[0] );
-		readImage( sky, skyDimentions, inputFits[1] );
-		readImage( wl, wlDimentions, inputFits[2] );
-	  }
-	 catch (std::bad_alloc& ba)
-	  {
-	    std::cerr << "bad_alloc caught: " << ba.what() << '\n';
-	  }
-
+	readImage( finalCube, finalCubeDimentions, inputFits[0] );
+	readImage( sky, skyDimentions, inputFits[1] );
+	readImage( wl, wlDimentions, inputFits[2] );
 
 	cout << "resultfile= " << resultFile << endl;
-
 	cout << "input fits= " << inputFits[0] << endl;
-
-	//* Remove all elements except the range [startIndex, sliceSize-1]
-
-/*
-	for(size_t i = 0; i < finalCubeDimentions[0]; ++i)
-		for(size_t j = 0; j < finalCubeDimentions[1]; ++j)
-			for(size_t k = 373; k < 613; ++k) {
-				size_t index = k * finalCubeDimentions[0] * finalCubeDimentions[1] + j * finalCubeDimentions[0] + i;
-				cout << "finalCube[" << i << "][" << j << "][" << k << "]= " << finalCube[index] << endl;
-			}
-		*/
-		//cout << finalCube[i + finalCubeDimentions[0]*finalCubeDimentions[1]] << "\t\t" << sky[i] << "\t\t" << wl[i] << endl;
-		//cout << "finalCube[" << 0 << "][" << 0 << "][" << i << "]= " << finalCube[i * finalCubeDimentions[1] * finalCubeDimentions[2]] << endl;
-
 	cout << "startIndex is: " << startIndex << endl;
 	cout << "sigStartIndex is: " << sigStartIndex << endl;
 	cout << "sky size is: " << sky.size() << endl;
 
-	//cout << "finalCube: " << finalCube[slice( startIndex, sliceSize, 1 )] << endl;
-
-	//valarray<double> tmpFinalCube( finalCubeDimentions[0] * finalCubeDimentions[1] * sliceSize );
-/*	for(size_t i = 0; i < finalCubeDimentions[0]; ++i)
-		for( size_t j = 0, k = 0; j < finalCubeDimentions[1]; ++j, k += sliceSize) {
-			tmpFinalCube[slice( 0, sliceSize, 1 )] = finalCube[slice( startIndex, sliceSize, 1 )];
-		}*/
-//	tmpFinalCube[slice( 0, sliceSize, 1 )] = finalCube[slice( startIndex, sliceSize, 1 )];
-/*
-	for(size_t i = 0; i < sliceSize; ++i) {
-		cout << "finalCube[" << i << "]= " << tmpFinalCube[i] << endl;
-	}
-*/
-
 
 	resizeOneDimentional( sky, startIndex, sliceSize );
 	resizeOneDimentional( wl, startIndex, sliceSize );
-	//sky /= 10000;
 	var.resize( sliceSize );
 	var = 1. / sky;
 
@@ -765,65 +636,17 @@ int main(int argc, char* argv[]) {
 					 akeep( alast[0], alast.size() ), bkeep( brlf[0], brlf.size() );
 
 
-	 sig2d.resize( finalCubeDimentions[0] * finalCubeDimentions[1] * sliceSize );
-/*
-	for(size_t outterIndex = 3; outterIndex < finalCubeDimentions[1] - 3; ++outterIndex)
-		for(size_t innerIndex = 3; innerIndex < finalCubeDimentions[0] - 3; ++innerIndex) {
+	sig2d.resize( finalCubeDimentions[0] * finalCubeDimentions[1] * sliceSize );
 
-
-		}
-*/
-/*
-	for(size_t i = 0; i < sky.size(); ++i)
-		cout << "var[" << i << "]= " << var[i] << endl;
-	for(size_t i = 0; i < alast.size(); ++i)
-		cout << "alast[" << i << "]= " << alast[i] << endl;
-	for(size_t i = 0; i < brlf.size(); ++i)
-			cout << "brlf[" << i << "]= " << brlf[i] << endl;
-*/
 	cout << "The start index: " << startIndex << " The sig start index: " << sigStartIndex <<endl;
 
 	cout << "The dimension of final cube is " << finalCubeDimentions.size() << endl;
 
 	for(size_t i = 0; i < finalCubeDimentions.size(); ++i)
 		cout << "The size of dimension " << i << " is " << finalCubeDimentions[i] << endl;
-	//readTable();
+
 	cout << "The size of final cube is " << finalCube.size() << endl;
-
-
 	cout << "The size of sig2d is " << sig2d.size() << endl;
-
-/*
-	finalCubeDimentions[0] = finalCubeDimentions[1] = finalCubeDimentions[2] = 5;
-	finalCube.resize( finalCubeDimentions[0] * finalCubeDimentions[1] * finalCubeDimentions[2] );
-
-	for (size_t i = 0; i < finalCube.size(); ++i)
-		finalCube[i] = i + 1;
-*/
-	//sliceSize = 3;
-
-
-
-/*
-	valarray<double> tmpFinalCube( finalCubeDimentions[0] * finalCubeDimentions[1] * sliceSize );
-
-	for (size_t k = startIndex; k < startIndex + sliceSize; ++k)
-		for (size_t j = 0; j < finalCubeDimentions[1]; ++j) {
-			size_t ij =
-			for(size_t i = 0; i < finalCubeDimentions[0]; ++i)
-				tmpFinalCube[k - startIndex] = finalCube[];
-		}
-
-
-
-	size_t first = startIndex,
-		   last = sigStartIndex + sliceSize;
-	if( sigStartIndex < startIndex ) {
-		first = sigStartIndex;
-		last = startIndex + sliceSize;
-	}
-*/
-
 
 
 
@@ -843,137 +666,31 @@ int main(int argc, char* argv[]) {
 	finalCube = tmpFinalCube;
 	tmpFinalCube.resize( 0 );
 
-/*
-	cout << endl;
-
-	for(size_t i = 0, l = 0, m = 0; i < finalCubeDimentions[0]; ++i)
-		for(size_t j = 0; j < finalCubeDimentions[1]; ++j) {
-
-			size_t  ij = i * finalCubeDimentions[1] + j;
-
-			for(size_t k = first; k < last; ++k) {
-
-				size_t ijk = k * finalCubeDimentions[1] * finalCubeDimentions[2] + ij;
-
-				cout << ijk << " ";
-
-				if ( k >= sigStartIndex && k < ( sigStartIndex + sliceSize ) ) {
-					sig2d[l++] = finalCube[ijk];// / 10000;
-					//slice( startIndex, sliceSize, 1 )
-				}
-				if ( k >= startIndex && k < ( startIndex + sliceSize ) ) {
-					tmpFinalCube[m++] = finalCube[ijk];// / 10000;
-					//cout << "finalCube[" << i << "][" << j << "][" << k << "]= " << finalCube[ijk] << '\t';
-					//cout << "tmpFinalCube[" << i << "][" << j << "][" << k << "]= " << tmpFinalCube[m-1] << endl;
-				}
-				//cout << sig2d[index] << " ";
-			}
-//			cout << "l= " << l << " m= " << m << endl;
-		}
-
-	cout << endl;
-
-	*/
-
-/*
-	vector<long> aResDims2( 3 );
-	aResDims2[0] = finalCubeDimentions[0];
-	aResDims2[1] = finalCubeDimentions[1];
-	aResDims2[2] = finalCubeDimentions[2];
-
-
-
-	writeImage( "FCreadcut" + resultFile, 3, aResDims2, finalCube );
-	cout << endl;
-
-
-
-	return 0;
-
-
-
-
-/*
-	vector<long> aResDims2( 3 );
-	aResDims2[0] = finalCubeDimentions[0];
-	aResDims2[1] = finalCubeDimentions[1];
-	aResDims2[2] = finalCubeDimentions[2];
-
-
-
-	writeImage( "FCreadcut" + resultFile, 3, aResDims2, finalCube );
-
-	return 0;
-*/
-
-
-	/*
-	cout << "The size of sig2d is " << sig2d.size() << endl;
-	cout << "The size of tmpFinalCube is " << tmpFinalCube.size() << endl;
-	cout << "The size of finalCube is " << finalCube.size() << endl;
-*/
-
-
-/*
-	for(size_t i = 0; i < finalCubeDimentions[0]; ++i)
-		for(size_t j = 0; j < finalCubeDimentions[1]; ++j)
-			for(size_t k = 0; k < finalCubeDimentions[2]; ++k) {
-				//size_t index = k * finalCubeDimentions[0] * finalCubeDimentions[1] + j * finalCubeDimentions[0] + i;
-				size_t index = i * finalCubeDimentions[2] * finalCubeDimentions[1] + finalCubeDimentions[2] * j + k;
-				cout << "finalCube[" << i << "][" << j << "][" << k << "]= " << finalCube[index] << endl;
-			}
-*/
-	//valarray<double> akeep ( alast ), bkeep( brlf );
-
-//	double a[5] = { 0.0543693, 10.1, 2.0, 0.0, 10.1 };
 
 	aSize = alast.size();
 	bSize = brlf.size();
-//	size_t aCount = 0,
-//		   bCount = 0;
-
 
 	vector<long> aResDims( 3 );
-	aResDims[0] = finalCubeDimentions[0];// - 6;
-	aResDims[1] = finalCubeDimentions[1];// - 6;
+	aResDims[0] = finalCubeDimentions[0];
+	aResDims[1] = finalCubeDimentions[1];
 	aResDims[2] = aSize;
 
 	vector<long> bResDims( 3 );
-	bResDims[0] = finalCubeDimentions[0];// - 6;
-	bResDims[1] = finalCubeDimentions[1];// - 6;
+	bResDims[0] = finalCubeDimentions[0];
+	bResDims[1] = finalCubeDimentions[1];
 	bResDims[2] = bSize - aSize;
 
 	vector<long> cResDims( 3 );
-	cResDims[0] = finalCubeDimentions[0];// - 6;
-	cResDims[1] = finalCubeDimentions[1];// - 6;
+	cResDims[0] = finalCubeDimentions[0];
+	cResDims[1] = finalCubeDimentions[1];
 	cResDims[2] = 2;
 
 	aResult.resize( aResDims[0] * aResDims[1] * aResDims[2] );
 	bResult.resize( bResDims[0] * bResDims[1] * bResDims[2] );
 	cResult.resize( cResDims[0] * cResDims[1] * cResDims[2] );
 
-	//aResult.resize( finalCube.size() );
-	//bResult.resize( finalCube.size() );
-
-
-
-
-
-/*
-	vector<long> aResDims2( 3 );
-	aResDims2[0] = finalCubeDimentions[0];
-	aResDims2[1] = finalCubeDimentions[1];
-	aResDims2[2] = finalCubeDimentions[2];
-
-
-
-	writeImage( "FCread" + resultFile, 3, aResDims2, finalCube );
-
-	return 0;
-*/
-
 	vector<pthread_t> thread( nbThreads );
-	vector<ParamsThread> paramsThreads( nbThreads ); //= new ParamsThread[nbThreads];
+	vector<ParamsThread> paramsThreads( nbThreads );
 
 	size_t jobSize = ( finalCubeDimentions[1] - 6 ) / nbThreads;
 	size_t remainder = ( finalCubeDimentions[1] - 6 ) % nbThreads;
@@ -994,14 +711,6 @@ int main(int argc, char* argv[]) {
 			++paramsThreads[i + 1].jGlobal;
 	}
 
-	//paramsThreads[0].jGlobal = 3; //We are starting calculations from index 3
-
-	//paramsThreads[nbThreads - 1].index = nbThreads - 1;
-	//paramsThreads[nbThreads - 1].jobSize = finalCubeDimentions[0] / nbThreads + finalCubeDimentions[0] % nbThreads;
-	//paramsThreads[nbThreads - 1].iGlobal = ( nbThreads - 1 ) * ( finalCubeDimentions[0] / nbThreads );
-
-
-
 	for (size_t i = 0; i < nbThreads; ++i) {
 		pthread_create( &thread[i], NULL, runThreads, (void*)&paramsThreads[i] );
 	}
@@ -1010,22 +719,11 @@ int main(int argc, char* argv[]) {
 		pthread_join( thread[i], NULL );
 	}
 
-/*
-	vector<long> aCubeDimentions( 3 );
-	aCubeDimentions[0] = finalCubeDimentions[0] - 6;
-	aCubeDimentions[1] = finalCubeDimentions[1] - 6;
-	aCubeDimentions[2] = aSize;
-*/
-
-
 
 
 	writeImage( "a" + resultFile, 3, aResDims, aResult );
 	writeImage( "b" + resultFile, 3, bResDims, bResult );
 	writeImage( "c" + resultFile, 3, cResDims, cResult );
-
-	//Here ends the process-parallel routines
-
 
 	cout << "Execution time is " <<  time( NULL ) - ts << " seconds." << endl;
 	return 0;
@@ -1052,12 +750,12 @@ void* runThreads(void* param) {
 	valarray<double> w( sliceSize );
 	w = var / median( var );
 
-
-	printArray( paramTh->index, alast, "alast" );
-	printArray( paramTh->index, a, "first_a" );
+	if( info ) {
+		printArray( paramTh->index, alast, "alast" );
+		printArray( paramTh->index, a, "first_a" );
+	}
 
 	mp_par pars[b.size()];
-	//pars = (mp_par*)malloc( sizeof(mp_par) * ( limits.size() / 3 ) );
 	memset( pars, 0, sizeof( pars ) );
 
 	for(size_t ind = 0; ind < limits.size(); ind += 3) {
@@ -1069,23 +767,11 @@ void* runThreads(void* param) {
 	}
 
 
-/*
-	ofstream aMyFile, bMyFile;
-	aMyFile.open( "aASCIIRes.txt" );
-	bMyFile.open( "bASCIIRes.txt" );
-*/
-
-//	cout << "jobsize= " << paramTh->jobSize << endl;
-//	cout << "glovbal I" << paramTh->iGlobal << endl;
-
 	for(size_t j = 0; ( j < paramTh->jobSize ) && ( j + paramTh->jGlobal < finalCubeDimentions[1] - 3 ); ++j) {
 
 		size_t realInd = j + paramTh->jGlobal; // j index of the finalcube
 		a_old = alast;
 		b_old = brlf;
-
-
-		//cout << "Global J= " << paramTh->jGlobal << endl;
 
 
 		for(size_t i = 3; i < finalCubeDimentions[0] - 3; ++i) {
@@ -1102,13 +788,12 @@ void* runThreads(void* param) {
 
 			double sig2 = stdev( sig );
 			sig2 *= sig2;
+
 			if ( sig2 == 0.0 )
 				continue;
-			cout << "sig2= " << sig2 << endl;
+
 			double av = average( y );
 			double chi0 = ( ( w * ( y - av ) * ( y - av ) ) / sig2 ).sum();
-
-			cout << "At i=" << i << ", j=" << realInd << " chi0= " << chi0 << endl;
 
 			struct Parameters p;
 			p.x.resize( sliceSize );
@@ -1118,21 +803,18 @@ void* runThreads(void* param) {
 			p.x = x;
 			p.y = y;
 			p.yErr = 1. / w;
-		//	p.par = alast.data();
+
 			mp_result result;
 			memset( &result, 0, sizeof( result ) );
 
 
-
-
-		//	mp_result result2;
-		//	memset( &result2, 0, sizeof( result2 ) );
-
 			a = a_old;
 			b = b_old;
 
-			cout << "At i=" << i << ", j=" << realInd << " ";
-			printArray( paramTh->index, a, "aBefore" );
+			if( info ) {
+				cout << "At i=" << i << ", j=" << realInd << " ";
+				printArray( paramTh->index, a, "aBefore" );
+			}
 
 			mpfit( fittingFunctions[fittingFunction], sliceSize, aSize, &a[0], pars, 0, (void *) &p, &result );
 
@@ -1141,12 +823,12 @@ void* runThreads(void* param) {
 				cout << "Error status: " << result.status << endl;
 			}
 
-			cout << "At i=" << i << ", j=" << realInd << " ";
-			printArray( paramTh->index, a, "a" );
+			if( info ) {
+				cout << "At i=" << i << ", j=" << realInd << " ";
+				printArray( paramTh->index, a, "a" );
+			}
 
 			double chi1 = ( w * ( y - p.f ) * ( y - p.f ) / sig2 ).sum();
-			cout << "At i=" << i << ", j=" << realInd << " chi1= " << chi1 << endl;
-
 			double bestNorm = chiSquared( y, p.f );
 			size_t N0 = y.size() - 1,
 				   N1 = y.size() - a.size(),
@@ -1160,83 +842,74 @@ void* runThreads(void* param) {
 
 				mpfit( fittingFunctions[fittingFunction + "_br"], sliceSize, bSize, &b[0], pars, 0, (void *) &p, &result );
 
-
-				cout << "At i=" << i << ", j=" << realInd << " ";
-				printArray( paramTh->index, b, "b" );
+				if( info ) {
+					cout << "At i=" << i << ", j=" << realInd << " ";
+					printArray( paramTh->index, b, "b" );
+				}
 
 				double chi2 = ( w * ( y - p.f ) * ( y - p.f ) / sig2 ).sum();  // p.f is different from p.f used in chi1
 
 				pFTest = fTest( N1, N2, bestNorm, chiSquared( y, p.f ) );
 
-				if ( chi1 - chi2 >= chi2lim2 && pFTest < alpha && !oneEqual( b, brlf) ) {  // p < alpha
-					//chi1-chi2, pFTest
+				if ( chi1 - chi2 >= chi2lim2 && pFTest < alpha && !oneEqual( b, brlf) ) {
 
-					a_old = b[slice( 0, 5, 1 )];
-					b_old = b;
+					if( !alwaysFg ) {
+						a_old = b[slice( 0, 5, 1 )];
+						b_old = b;
+					}
 
-			//		writeToAscii( realInd, j, b[slice( 0, 5, 1 )], aMyFile );
-			//		writeToAscii( realInd, j, b[slice( 5, 3, 1 )], bMyFile );
 					aResult[slice( resIj, aSize, resDim01 )] = b[slice( 0, aSize, 1 )]; // first 5 elements of b
 					bResult[slice( resIj, bSize - aSize, resDim01 )] = b[slice( aSize, bSize - aSize, 1 )]; // last 3 elements of b
 					cResult[resIj] =  sqrt( chi1 - chi2 );
 					cResult[resIj + resDim01] = pFTest;
-					cout << "At i=" << i << ", j=" << realInd << " pFTest= " << pFTest << endl;
-					cout << "i= " << i << " j= " << realInd << endl;
-					printArray( paramTh->index, b, "b" );
+
+					if( info ) {
+						cout << "At i=" << i << ", j=" << realInd << " pFTest= " << pFTest << endl;
+						cout << "i= " << i << " j= " << realInd << endl;
+						printArray( paramTh->index, b, "b" );
+					}
 
 				} else {
-					//chi0-chi1, pFTest --old
-					a_old = a;
-			//		writeToAscii( realInd, j, a, aMyFile );
+
+					if( !alwaysFg )
+						a_old = a;
+
 					aResult[slice( resIj, aSize, resDim01 )] = a;
 					cResult[resIj] =  sqrt( chi0 - chi1 );
 					cResult[resIj + resDim01] = pFTest_old;
-					cout << "At i=" << i << ", j=" << realInd << " pFTest_old= " << pFTest_old << endl;
-					cout << "i= " << i << " j= " << realInd << endl;
-			//		cout << "i= " << paramTh->iGlobal + i << " j= " << j << endl;
-					printArray( paramTh->index, a, "a" );
+
+					if( info ) {
+						cout << "At i=" << i << ", j=" << realInd << " pFTest_old= " << pFTest_old << endl;
+						cout << "i= " << i << " j= " << realInd << endl;
+						printArray( paramTh->index, a, "a" );
+					}
 				}
 
-	//				++aCount;
 			} else {
 
-	//				clock_t neighb = clock();
-	//			cout << "i= " << paramTh->iGlobal + i << " j= " << j << endl;
-				avOfNeighbors( y, true,/*finalCube,*/ i, realInd, 3 );
-				avOfNeighbors( sig, false,/*sig2d,*/ i, realInd, 3 );
-	//				cout << "Neighbor count time is " << (double)(clock() - neighb)/CLOCKS_PER_SEC << endl;
+				avOfNeighbors( y, true, i, realInd, 3 );
+				avOfNeighbors( sig, false, i, realInd, 3 );
 
 				sig2 = stdev( sig );
 				sig2 *= sig2;
 				av = average( y );
 				chi0 = ( ( w * ( y - av ) * ( y - av ) ) / sig2 ).sum();
-				//printArray(y.size(), y, "y after");
-
-				cout << "At i=" << i << ", j=" << realInd << " after binfing chi0= " << chi0 << endl;
-
-				//chi0r = chi0 / y.size();
-
 				p.y = y;
 
 
 				mpfit( fittingFunctions[fittingFunction], sliceSize, aSize, &a[0], pars, 0, (void *) &p, &result );
-				//myMpfit( false, sliceSize, aSize, &a[0], 0, 0, (void *) &p, &result );
-				//mpfit( triplet, sliceSize, aSize, &a[0], 0, 0, (void *) &p, &result );
 
 				if( result.status < 0 ) {
 					cout << "Error while fitting on index i= " << i << " j= " << realInd << " !" << endl;
 					cout << "Error status: " << result.status << endl;
-				//	continue;
 				}
 
-				cout << "At i=" << i << ", j=" << realInd << " ";
-				printArray( paramTh->index, a, "aN" );
+				if( info ) {
+					cout << "At i=" << i << ", j=" << realInd << " ";
+					printArray( paramTh->index, a, "aN" );
+				}
 
 				chi1 = ( w * ( y - p.f ) * ( y - p.f ) / sig2 ).sum();
-				cout << "At i=" << i << ", j=" << realInd << " after binding chi1= " << chi1 << endl;
-
-				//chi1r = chi1 / ( sliceSize - aSize + 1 );
-
 				bestNorm = chiSquared( y, p.f );
 				pFTest = fTest( N0, N1, chiSquared( y, sig ), bestNorm );
 
@@ -1251,49 +924,55 @@ void* runThreads(void* param) {
 						cout << "Error status: " << result.status << endl;
 					}
 
-					cout << "At i=" << i << ", j=" << realInd << " ";
-					printArray( paramTh->index, b, "bN" );
+					if( info ) {
+						cout << "At i=" << i << ", j=" << realInd << " ";
+						printArray( paramTh->index, b, "bN" );
+					}
 
 					double chi2 = ( w * ( y - p.f ) * ( y - p.f ) / sig2 ).sum();  // p.f is different from p.f used in chi1
-					//double chi2r = chi1 / ( sliceSize - bSize + 1 );
 
 					pFTest = fTest( N1, N2, bestNorm, chiSquared( y, p.f ) );
 
 					if ( chi1 - chi2 >= chi2lim2 && pFTest < alpha  && !oneEqual( b, brlf ) ) { // p < alpha
-						a_old = b[slice( 0, 5, 1 )];
-						b_old = b;
-		//				writeToAscii( realInd, j, b[slice( 0, 5, 1 )], aMyFile );
-		//				writeToAscii( realInd, j, b[slice( 5, 3, 1 )], bMyFile );
+						if( !alwaysFg ) {
+							a_old = b[slice( 0, 5, 1 )];
+							b_old = b;
+						}
+
 						aResult[slice( resIj, aSize, resDim01 )] = b[slice( 0, aSize, 1 )]; // first 5 elements of b
 						bResult[slice( resIj, bSize - aSize, resDim01 )] = b[slice( aSize, bSize - aSize, 1 )]; // last 3 elements of b
 						cResult[resIj] =  sqrt( chi1 - chi2 );
 						cResult[resIj + resDim01] = pFTest;
-						cout << "At i=" << i << ", j=" << realInd << " pFTest= " << pFTest << endl;
-						cout << "i= " << i << " j= " << realInd << endl;
-						printArray( paramTh->index, b, "b9" );
 
-						//						++bCount;
+						if( info ) {
+							cout << "At i=" << i << ", j=" << realInd << " pFTest= " << pFTest << endl;
+							cout << "i= " << i << " j= " << realInd << endl;
+							printArray( paramTh->index, b, "b9" );
+						}
+
 					} else {
-						a_old = a;
-				//		writeToAscii( realInd, j, a, aMyFile );
+
+						if( !alwaysFg )
+							a_old = a;
+
 						aResult[slice( resIj, aSize, resDim01 )] = a;
 						cResult[resIj] =  sqrt( chi0 - chi1 );
 						cResult[resIj + resDim01] = pFTest_old;
-						cout << "At i=" << i << ", j=" << realInd << " pFTest_old= " << pFTest_old << endl;
-						cout << "i= " << i << " j= " << realInd << endl;
-						printArray( paramTh->index, a, "a9" );
+
+						if( info ) {
+							cout << "At i=" << i << ", j=" << realInd << " pFTest_old= " << pFTest_old << endl;
+							cout << "i= " << i << " j= " << realInd << endl;
+							printArray( paramTh->index, a, "a9" );
+						}
 					}
-				}  else
-					cout << "Thread #" << paramTh->index << ": No line detected at i= " << i << ", j= " << realInd << endl;
+				}  else {
+					if( info )
+						cout << "Thread #" << paramTh->index << ": No line detected at i= " << i << ", j= " << realInd << endl;
+				}
 			}
 
 		} // End of first for
 	}  // End of second for
-
-//	free( pars );
-
-//	aMyFile.close();
-//	bMyFile.close();
 
 	return 0;
 }
@@ -1302,72 +981,43 @@ void* runThreads(void* param) {
 
 void readImage(valarray<double> &contents, vector<unsigned int> &dimentions, string fileName) {
 
+	if( info )
 	  FITS::setVerboseMode(true);
 
-	  try {
+  try {
+	   auto_ptr<FITS> pInfile( new FITS( fileName, Read, true ) );
+	   PHDU& image = pInfile->pHDU();
 
-		   auto_ptr<FITS> pInfile( new FITS( fileName, Read, true ) );
+	   // read all user-specifed, coordinate, and checksum keys in the image
+	   image.readAllKeys();
+	   image.read( contents );
 
-		   PHDU& image = pInfile->pHDU();
+	   int size =  image.axes();
+	   dimentions.resize( size );
 
-		  // valarray<double>  contents;
+	   for(int i = 0; i < size; ++i )
+		   dimentions[i] = image.axis( i );
 
-		   // read all user-specifed, coordinate, and checksum keys in the image
-		   image.readAllKeys();
+	} catch (FitsException&) {
 
-		   image.read( contents );
-
-		   int size =  image.axes();
-		   dimentions.resize( size );
-		  // dimentions[0] = size;
-		   for(int i = 0; i < size; ++i )
-			   dimentions[i] = image.axis( i );
-
-	//	   cout << "size of the array is: " << contents.size() << '\n';
-
-		   // this doesn't print the data, just header info.
-	 //      std::cout << image << std::endl;
-	/*       if ( size > 2 ) {
-			   cout << fileName << ":\n";
-			   for(size_t i = 0; i < dimentions[0] * 4; ++i)
-				   cout << contents[i] << ' ';
-			   cout << endl;
-		   }
-	*/
-	/*
-		   long ax1(image.axis(0));
-		   long ax2(image.axis(1));
-
-
-		   for (long j = 0; j < ax2; j+=10)
-		   {
-				   std::ostream_iterator<double> c(std::cout,"\t");
-				   std::copy(&contents[j*ax1],&contents[(j+1)*ax1-1],c);
-				   std::cout << '\n';
-		   }
-	*/
-	 //      std::cout << std::endl;
-	  //     return ;
-
-
-	    } catch (FitsException&) {
-
-	      cerr << " Fits Exception Thrown by FitsImage class \n";
-	      cerr << " Fits file name : " << fileName << endl;
-	     // rv=1; // problem
-	    }
-		catch (std::bad_alloc& ba)
-		 {
-		   cerr << "bad_alloc caught: " << ba.what() << endl;
-		   cerr << "Not enough space in RAM to load FITS file" << endl;
-		   exit(1);
-		 }
+	  cerr << " Fits Exception Thrown by FitsImage class \n";
+	  cerr << " Fits file name : " << fileName << endl;
+	}
+	catch (std::bad_alloc& ba)
+	 {
+	   cerr << "bad_alloc caught: " << ba.what() << endl;
+	   cerr << "Not enough space in RAM to load FITS file" << endl;
+	   exit(1);
+	 }
 
 }
 
 
 
 int writeImage( string fileName, long naxis, vector<long> naxes, valarray<double> va ) {
+
+	if( info )
+	  FITS::setVerboseMode(true);
 
     // declare auto-pointer to FITS at function scope. Ensures no resources
     // leaked if something fails in dynamic allocation.
@@ -1376,21 +1026,15 @@ int writeImage( string fileName, long naxis, vector<long> naxes, valarray<double
     try
     {
         // overwrite existing file if the file already exists.
-
     	fileName = "!" + fileName;
-//        const std::string fileName("!atestfil.fit");
 
         // Create a new FITS object, specifying the data type and axes for the primary
         // image. Simultaneously create the corresponding file.
-
-        // this image is unsigned short data, demonstrating the cfitsio extension
-        // to the FITS standard.
 
         pFits.reset( new FITS( fileName , static_cast<int>(FLOAT_IMG) , naxis, naxes.data() ) );
     }
     catch (FITS::CantCreate*)
     {
-          // ... or not, as the case may be.
           return -1;
     }
 
@@ -1403,13 +1047,6 @@ int writeImage( string fileName, long naxis, vector<long> naxes, valarray<double
     // the primary HDU; PHDU::write( <args> ) is then used to write the data.
 
     pFits->pHDU().write( 1, nelements, va );
-
-
-    // PHDU's friend ostream operator. Doesn't print the entire array, just the
-    // required & user keywords, and is provided largely for testing purposes [see
-    // readImage() for an example of how to output the image array to a stream].
-
-  //  std::cout << pFits->pHDU() << std::endl;
 
     return 0;
 }
@@ -1437,16 +1074,20 @@ double fTest( size_t n0, size_t n1, double bN0, double bN1 ) {
 
 int oneEqual(valarray<double> a, valarray<double> b) {
 
-	for(size_t i=0; i < a.size(); ++i) {
-		if(a[i] == b[i])
-			return 1;
+	if( compare_guess ) {
+		for(size_t i=0; i < a.size(); ++i) {
+			if(a[i] == b[i])
+				return 1;
+		}
 	}
 
-	for(size_t i = 0; i < limits.size(); i+=3) {
-		if( limits[i] >= a.size() )
-			continue;
-		if(a[limits[i]] == limits[i+1] || a[limits[i]] == limits[i+2])
-			return 1;
+	if( compare_limits ) {
+		for(size_t i = 0; i < limits.size(); i+=3) {
+			if( limits[i] >= a.size() )
+				continue;
+			if(a[limits[i]] == limits[i+1] || a[limits[i]] == limits[i+2])
+				return 1;
+		}
 	}
 
 	return 0;

@@ -31,6 +31,14 @@
 	"value": 0,
 	"doc": "1 means we will use only first guess, 0 means we will use results from fitting"
 	},
+	"compare_limits": {
+	"value": 0,
+	"doc": "1 means we will compare to limits, 0 means we will not"
+	},
+	"compare_guess": {
+	"value": 0,
+	"doc": "1 means we will compare first guess, 0 means we will not"
+	},
 "resultfile": {
 	"value": "cube.fits",
 	"doc": "As we have two result files, prefixes a and b will be added to the resultfile"

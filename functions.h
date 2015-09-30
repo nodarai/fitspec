@@ -157,9 +157,9 @@ int Hb_br(int m, int n, double *p, double *deviates, double **derivs, void *data
 	valarray<double> OIII_a_ln = ( OIIIinten / ww / piSqr ) * ( exp( -0.5 * ( x - OIII_r ) * ( x - OIII_r ) / ( ww * ww ) ) );
 	valarray<double> OIII_b_ln = ( OIIIinten /3. / ww / piSqr ) * ( exp( -0.5 * ( x - OIII_b ) * ( x - OIII_b ) / ( ww * ww ) ) );
 
-	valarray<double> Hb_ln_br = ( Hbinten / ww_br / piSqr ) * ( exp( -0.5 * ( x - Hb_br ) * ( x - Hb_br ) / ( ww_br * ww_br ) ) );
-	valarray<double> OIII_a_ln_br = ( OIIIinten /ww_br / piSqr ) * ( exp( -0.5 * ( x - OIII_r_br ) * ( x - OIII_r_br ) / ( ww_br * ww_br ) ) );
-	valarray<double> OIII_b_ln_br = ( OIIIinten / 3. / ww_br / piSqr ) * ( exp( -0.5 * ( x - OIII_b_br ) * ( x - OIII_b_br ) / ( ww_br * ww_br ) ) );
+	valarray<double> Hb_ln_br = ( Hbinten_br / ww_br / piSqr ) * ( exp( -0.5 * ( x - Hb_br ) * ( x - Hb_br ) / ( ww_br * ww_br ) ) );
+	valarray<double> OIII_a_ln_br = ( OIIIinten_br /ww_br / piSqr ) * ( exp( -0.5 * ( x - OIII_r_br ) * ( x - OIII_r_br ) / ( ww_br * ww_br ) ) );
+	valarray<double> OIII_b_ln_br = ( OIIIinten_br / 3. / ww_br / piSqr ) * ( exp( -0.5 * ( x - OIII_b_br ) * ( x - OIII_b_br ) / ( ww_br * ww_br ) ) );
 
 	pr->f  = cont + Hb_ln + OIII_a_ln + OIII_b_ln + Hb_ln_br + OIII_a_ln_br + OIII_b_ln_br;
 	pr->f *= 10000;
